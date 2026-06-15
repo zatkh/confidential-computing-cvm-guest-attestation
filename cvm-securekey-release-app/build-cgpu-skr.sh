@@ -325,7 +325,7 @@ FindTss2.cmake requires it. Re-run the prerequisites."
     # NOTE: build_x86_64.sh redirects cmake/make output to log files, so on
     # failure the real error is in those logs, not on the terminal.
     CLIB_LOG_DIR="$ATTEST_DIR/_build/x86_64/log"
-    ( cd "$REPO_ROOT/cvm-attestation-sample-app" && as_root NVAT_ROOT="$NVAT_ROOT" ./ClientLibBuildAndInstallAzureLocal.sh ) \
+    ( cd "$REPO_ROOT/cvm-attestation-sample-app" && as_root env NVAT_ROOT="$NVAT_ROOT" ./ClientLibBuildAndInstallAzureLocal.sh ) \
       || die "Azure Local libazguestattestation build/install failed. \
 Check the build logs: $CLIB_LOG_DIR/cmake.build.log and $CLIB_LOG_DIR/make.build.log"
     as_root ldconfig

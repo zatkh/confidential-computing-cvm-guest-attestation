@@ -56,7 +56,7 @@ if [ "$CLEAN_BUILD" = true ]; then
     # Rebuild attestation library for Azure Local
     echo "Rebuilding attestation library (Azure Local)..."
     pushd "${SCRIPT_DIR}/cvm-attestation-sample-app" > /dev/null
-    sudo NVAT_ROOT="${NVAT_ROOT}" ./ClientLibBuildAndInstallAzureLocal.sh ${CLIENT_LIB_FLAGS}
+    sudo env NVAT_ROOT="${NVAT_ROOT}" ./ClientLibBuildAndInstallAzureLocal.sh ${CLIENT_LIB_FLAGS}
     popd > /dev/null
 
     # Clean and rebuild AttestationClient
@@ -90,7 +90,7 @@ ATTEST_DEB="${SCRIPT_DIR}/client-library/src/Attestation/_build/x86_64/packages/
 if [ ! -f "${ATTEST_DEB}" ]; then
     echo "Building attestation library (Azure Local)..."
     pushd "${SCRIPT_DIR}/cvm-attestation-sample-app" > /dev/null
-    sudo NVAT_ROOT="${NVAT_ROOT}" ./ClientLibBuildAndInstallAzureLocal.sh ${CLIENT_LIB_FLAGS}
+    sudo env NVAT_ROOT="${NVAT_ROOT}" ./ClientLibBuildAndInstallAzureLocal.sh ${CLIENT_LIB_FLAGS}
     popd > /dev/null
 fi
 if [ -f "${ATTEST_DEB}" ]; then
