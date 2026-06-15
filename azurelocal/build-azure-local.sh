@@ -38,13 +38,25 @@ if [ "$INSTALL_PREREQS" = true ]; then
     CLIENT_LIB_FLAGS="-p"
 fi
 
+# The Azure Local attestation library links the NVIDIA attestation SDK (NVAT)
+# for the CVM<->CGPU binding gate. NVAT_ROOT must point at the NVAT install
+# prefix (containing include/nvat.h and lib/libnvat.so) and is forwarded to the
+# library's CMake build. The SKR app itself does not need NVAT (it uses the
+# library API), so only the library build consumes this.
+if [ -z "${NVAT_ROOT}" ]; then
+    echo "WARNING: NVAT_ROOT is not set. The Azure Local attestation library build"
+    echo "         requires the NVIDIA attestation SDK (NVAT) for CGPU binding and"
+    echo "         will fail to configure. Export NVAT_ROOT=/path/to/nvat first, e.g.:"
+    echo "             export NVAT_ROOT=/opt/nvat"
+fi
+
 if [ "$CLEAN_BUILD" = true ]; then
     echo "=== Clean rebuild ==="
 
     # Rebuild attestation library for Azure Local
     echo "Rebuilding attestation library (Azure Local)..."
     pushd "${SCRIPT_DIR}/cvm-attestation-sample-app" > /dev/null
-    sudo ./ClientLibBuildAndInstallAzureLocal.sh ${CLIENT_LIB_FLAGS}
+    sudo NVAT_ROOT="${NVAT_ROOT}" ./ClientLibBuildAndInstallAzureLocal.sh ${CLIENT_LIB_FLAGS}
     popd > /dev/null
 
     # Clean and rebuild AttestationClient
@@ -78,7 +90,7 @@ ATTEST_DEB="${SCRIPT_DIR}/client-library/src/Attestation/_build/x86_64/packages/
 if [ ! -f "${ATTEST_DEB}" ]; then
     echo "Building attestation library (Azure Local)..."
     pushd "${SCRIPT_DIR}/cvm-attestation-sample-app" > /dev/null
-    sudo ./ClientLibBuildAndInstallAzureLocal.sh ${CLIENT_LIB_FLAGS}
+    sudo NVAT_ROOT="${NVAT_ROOT}" ./ClientLibBuildAndInstallAzureLocal.sh ${CLIENT_LIB_FLAGS}
     popd > /dev/null
 fi
 if [ -f "${ATTEST_DEB}" ]; then

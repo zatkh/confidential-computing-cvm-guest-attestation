@@ -21,6 +21,12 @@ while getopts ":hdl" opt; do
       l )
         CMAKE_BUILDTYPE_OPT="${CMAKE_BUILDTYPE_OPT} -DAZURE_LOCAL=ON"
         echo "Azure Local = ON"
+        # CGPU binding requires the NVIDIA attestation SDK (NVAT). Forward
+        # NVAT_ROOT (env) to CMake so it can locate nvat.h / libnvat.
+        if [ -n "${NVAT_ROOT}" ]; then
+            CMAKE_BUILDTYPE_OPT="${CMAKE_BUILDTYPE_OPT} -DNVAT_ROOT=${NVAT_ROOT}"
+            echo "NVAT_ROOT = ${NVAT_ROOT}"
+        fi
       ;;
     \? )
         Usage

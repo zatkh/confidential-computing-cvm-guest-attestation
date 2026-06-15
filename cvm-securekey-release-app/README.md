@@ -1,77 +1,66 @@
 # AKV (or mHSM) Secure Key Release sample application
 
-The code in this directory demonstrates how to get an asymetric encryption key stored in Azure Keyvault or managed HSM released to a Linux Confidential or Trusted Launch VM. The attesting of the VM state cryptographically verifies it meets the requirements of a baseline attestation policy. The securely released asymmetric key can be used to wrap and unwrap a symmetric key.
+This is a sample app for Azure Local CGPU aware SKR for
+[Azure/confidential-computing-cvm-guest-attestation](https://github.com/Azure/confidential-computing-cvm-guest-attestation)
+(Confidential VM Platform Guest attestation sample apps). It targets
+**Linux-based Confidential VMs** on Azure Local.
 
-## Build Instructions for Linux
+`AzureAttestSKR` releases an asymmetric key from Azure Key Vault / managed HSM to a Linux Confidential VM only after the VM's hardware state passes an attestation policy; the released key wraps/unwraps a symmetric key. This fork adds an optional **CVM↔Confidential-GPU binding gate** (`-g`) and **Azure Local** support (host-brokered MAA + key release via the IGVM agent).
 
-Create a Linux Confidential or Trusted Launch virtual machine in Azure, tested on Ubuntu 22.04 and 24.04 with openssl 3.0.x package.
+## Build
 
-Use the below command to install the `build-essential` package. This package will install everything required for compiling our sample application written in C++.
+### One-shot (recommended)
 
-```sh
-$ sudo apt-get install -y build-essential
-```
-
-Install the below packages
-
-```sh
-$ sudo apt-get install -y libssl-dev libcurl4-openssl-dev libjsoncpp-dev libboost-all-dev nlohmann-json3-dev cmake
-```
-
-Download the latest attestation package from the following location - https://packages.microsoft.com/repos/azurecore/pool/main/a/azguestattestation1/
-
-Use the below command to install the attestation package
+`build-cgpu-skr.sh` does everything — installs build tooling, the Azure Guest
+Attestation library, the NVIDIA Attestation SDK (NVAT), and builds the app:
 
 ```sh
-$ wget https://packages.microsoft.com/repos/azurecore/pool/main/a/azguestattestation1/azguestattestation1_1.1.2_amd64.deb
-$ sudo dpkg -i azguestattestation1_1.1.2_amd64.deb
+cd cvm-securekey-release-app
+
+sudo ./build-cgpu-skr.sh                              # public Azure CVM + CGPU binding
+sudo ./build-cgpu-skr.sh --azure-local               # Azure Local (host-brokered SKR via IGVM agent)
+sudo ./build-cgpu-skr.sh --azure-local --build-only  # just rebuild after a code change
 ```
 
-Once the above packages have been installed, use below steps to build and run the app
+Other flags: `--no-binding` (plain CVM-only), `--skip-nvat`, `--skip-deps`,
+`--no-preflight`. See `./build-cgpu-skr.sh -h`.
+
+### Manual build
+
+Tested on Ubuntu 22.04 / 24.04 (OpenSSL 3.0.x).
 
 ```sh
-$ git clone --recursive https://github.com/Azure/confidential-computing-cvm-guest-attestation
-$ cd confidential-computing-cvm-guest-attestation
-$ cd cvm-securekey-release-app/
-$ mkdir build && cd build
-$ cmake .. -DCMAKE_BUILD_TYPE=Release  # Debug for more tracing output and define TRACE constant in CMakeLists.txt
-$ make
+sudo apt-get install -y build-essential cmake libssl-dev libcurl4-openssl-dev \
+    libjsoncpp-dev libboost-all-dev nlohmann-json3-dev
+
+# Azure Guest Attestation library (public Azure):
+wget https://packages.microsoft.com/repos/azurecore/pool/main/a/azguestattestation1/azguestattestation1_1.1.2_amd64.deb
+sudo dpkg -i azguestattestation1_1.1.2_amd64.deb
+
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release      # add -DAZURE_LOCAL=ON for Azure Local
+make
 ```
 
-## Build Instructions for Azure Local
-
-On Azure Local, the Evidence SDK (`edge-cc-base-attestation-sdk`) handles AKV authentication and key release via the host, using the Azure Local cluster identity, so IMDS/Service Principal credentials are not required.
-
-Note for Azure Local the attestation package must be built from source with Azure Local support enabled.
-Use the following script from the repo root to build and install:
-
-```sh
-$ cd cvm-attestation-sample-app/
-$ sudo ./ClientLibBuildAndInstallAzureLocal.sh -p  # -p to install pre-requisites (first time only)
-```
-
-See client-library/src/Readme.md for more details.
-
-Once the prerequisites have been installed, build with the `AZURE_LOCAL` CMake option enabled:
-
-```sh
-$ cd cvm-securekey-release-app/
-$ mkdir build && cd build
-$ cmake .. -DCMAKE_BUILD_TYPE=Release -DAZURE_LOCAL=ON
-$ make
-```
+On **Azure Local** the attestation library must be built from source with Azure
+Local support; `--azure-local` handles this (or see
+`cvm-attestation-sample-app/ClientLibBuildAndInstallAzureLocal.sh` and
+`client-library/src/Readme.md`).
 
 # Execution instructions.
 
 1- Create or use an existing Azure KeyVault in your subscription.
-2- Create an RSA key with below sample confidentiality policy for Azure.
+2- Create an RSA key with the sample release policy below. The `authority`
+   **must** be your per-cluster Azure Local MAA endpoint (see "Getting the MAA
+   endpoint"), e.g. `https://ra26014b305c1c7c2c4521.eus2e.attest.azure.net` —
+   **not** a public `shared*.attest.azure.net` URL.
 
 ```json
 {
   "version": "1.0.0",
   "anyOf": [
     {
-      "authority": "https://sharedweu.weu.attest.azure.net",
+      "authority": "https://<your-cluster>.<region>.attest.azure.net",
       "allOf": [
         {
           "claim": "x-ms-isolation-tee.x-ms-attestation-type",
@@ -87,14 +76,17 @@ $ make
 }
 ```
 
-For Azure Local, use the following SKR sample policy:
+For Azure Local, use the following SKR sample policy. The `authority` **must**
+be your per-cluster MAA endpoint (see "Getting the MAA endpoint" below), e.g.
+`https://ra26014b305c1c7c2c4521.eus2e.attest.azure.net` — **not** a public
+`shared*.attest.azure.net` URL:
 
 ```json
 {
   "version": "1.0.0",
   "anyOf": [
     {
-      "authority": "https://sharedweu.weu.attest.azure.net",
+      "authority": "https://<your-cluster>.<region>.attest.azure.net",
       "allOf": [
         {
           "claim": "x-ms-isolation-tee.x-ms-sevsnpvm-is-debuggable",
@@ -114,25 +106,55 @@ For Azure Local, use the following SKR sample policy:
 }
 ```
 
-3- Create or use an existing Managed Identity (user-assigned).
+3- Grant the releasing identity the **Key Vault Crypto Service Release User** role
+   (or `Get`+`Release` access-policy permissions) on the vault, and copy the built
+   `AzureAttestSKR` to your CVM (`scp ... AzureAttestSKR user@<VM_ip>:~`).
 
-> **⚠️ Azure Local Note:** Managed Identities are not supported on Azure Local CVMs. SKR is handled using the Azure Local cluster identity. You must grant this identity the 'Release' permissions on the key you wish to release.
-4- Assign the managed identity to the confidential VM.
-4- Grant 'Get' and 'Release' permissions to the managed identity in the Azure Keyvault access policies.
-5- Copy the built sample application to your target confidential VM.
+### Getting the MAA endpoint (`-a`)
+
+`-a` is the attestation authority that signs the CVM token; it must match the
+key's release-policy `authority`.
+
+- **Public Azure:** a regional shared MAA (e.g. `https://sharedeus2.eus2.attest.azure.net`)
+  or your own MAA instance URL.
+- **Azure Local:** a **per-cluster** endpoint. It lives on the **cluster**
+  resource, *not* on the node/Arc machine. Query it with:
+
+  ```sh
+  az stack-hci cluster show \
+    --resource-group "<your-edgeci-registration-rg>" \
+    --name "<your-cluster>" \
+    --query "isolatedVmAttestationConfiguration.attestationServiceEndpoint" \
+    -o tsv
+  # e.g. https://ra26014b305c1c7c2c4521.eus2e.attest.azure.net
+  ```
+
+  Validate it with `GET <endpoint>/.well-known/openid-configuration`. Pass the
+  base URL to `-a` (the guest-attest path is `/attest/AzureGuest?api-version=2020-10-01`).
+
+### Azure Local: host-brokered release (IGVM agent)
+
+On Azure Local there is **no guest Managed Identity / IMDS**. The host
+**IgvmAgent** service brokers attestation *and* the AKV key release using the
+**Azure Local cluster identity**, via the Evidence SDK
+(`edge-cc-base-attestation-sdk`, `release_akv_key()`) that `--azure-local` links.
+Requirements:
+
+- host `IgvmAgent` deployed and running (see the `azurelocal-cgpu` host setup);
+- the cluster (and/or node) identity has *Key Vault Crypto Service Release User*
+  on the vault;
+- the key is exportable with a release policy whose `authority` = the cluster MAA.
+
+The `-c imds|sp` flags are ignored in this mode.
+
+4- Execute wrap and unwrap key operations as shown below:
 
 ```sh
-scp -P 22 -i ssh.key AzureAttestSKR user@<VM_ip>:~
-```
-
-6- Execute wrap and unwrap key operations as shown below:
-
-```sh
-# to wrap a secret key
-sudo ./AzureAttestSKR -a "https://sharedweu.weu.attest.azure.net" -k "https://mykv.vault.azure.net/keys/mykey/version_GUID" -s mysecretkey123 -w
+# to wrap a secret key  (-a = your MAA endpoint; on Azure Local the per-cluster URL)
+sudo ./AzureAttestSKR -a "https://<your-cluster>.<region>.attest.azure.net" -k "https://mykv.vault.azure.net/keys/mykey/version_GUID" -s mysecretkey123 -w
 
 # to unwrap an encrypted key
-sudo ./AzureAttestSKR -a "https://sharedweu.weu.attest.azure.net" -k "https://mykv.vault.azure.net/keys/mykey/version_GUID" -s <copy_base64_from_previous_run> -u
+sudo ./AzureAttestSKR -a "https://<your-cluster>.<region>.attest.azure.net" -k "https://mykv.vault.azure.net/keys/mykey/version_GUID" -s <copy_base64_from_previous_run> -u
 
 ```
 
@@ -141,7 +163,7 @@ Optional Arguments
 - `-n`: If a nonce needs to be passed as client_payload json, use `-n` argument as below. This demo app only supports `nonce` key, however clients can send in any arbitary json as the `client_payload` in the MAA request.
 
 ```sh
-sudo ./AzureAttestSKR -a "https://sharedweu.weu.attest.azure.net" -n "<some-identifier-per-maa-request>" -k "https://mykv.vault.azure.net/keys/mykey/version_GUID" -s <copy_base64_from_previous_run> -u
+sudo ./AzureAttestSKR -a "https://ra26014b305c1c7c2c4521.eus2e.attest.azure.net" -n "<some-identifier-per-maa-request>" -k "https://mykv.vault.azure.net/keys/mykey/version_GUID" -s <copy_base64_from_previous_run> -u
 ```
 
 - `-c (imds|sp)`: Override the credentials source provider for accessing AKV
@@ -152,30 +174,83 @@ sudo ./AzureAttestSKR -a "https://sharedweu.weu.attest.azure.net" -n "<some-iden
 
 ---
 
-## Enhancements
+## CVM↔Confidential-GPU binding (`-g`)
 
-### Cross-Platform Support (Windows + Linux)
+When built with `-DENABLE_CGPU_BINDING=ON`, `-g` gates key release on a
+**CVM↔CGPU binding check**: the GPU must be healthy *and* cryptographically bound
+to this CVM (`gpu_nonce = SHA256("cgpu-binding-v1" || MAA_token || skr_nonce)`).
+The gate runs **after** the MAA token but **before** any AKV call, so on failure
+the key is never released (exit `2`, `EXIT_ATTEST_FAIL`).
 
-The application now builds on both **Linux** and **Windows**.
+### CGPU verifier modes (`-M`)
 
-#### Windows Build
+| Mode | Flags | Verifier | Network |
+|------|-------|----------|---------|
+| **remote** (default) | `-M remote` (`-K <key>` or `NVAT_SERVICE_KEY`) | NVIDIA NRAS cloud | outbound to NRAS |
+| **local** | `-M local -R <rim-dir>` | In-guest, local RIM directory | air-gapped |
+| **outpost** | `-M outpost -R <rim-uri> -O <ocsp-uri>` | In-guest, on-prem RIM/OCSP caches | on-prem only |
 
-Requires Visual Studio 2022 with C++ workload, CMake ≥ 3.15, and [vcpkg](https://github.com/microsoft/vcpkg).
+```sh
+# Remote (NRAS) — the happy path
+export NVAT_SERVICE_KEY="nvapi-..."
+sudo -E ./AzureAttestSKR -a "https://<cluster>.<region>.attest.azure.net" \
+  -k "https://mykv.vault.azure.net/keys/mykey/<ver>" \
+  -n "$(openssl rand -hex 16)" -g -M remote -s mysecret123 -w -V
 
-```powershell
-# One-time: install the GuestAttestation NuGet package
-nuget install Microsoft.Azure.Security.GuestAttestation -Version 1.1.0 -OutputDirectory packages
+# Local (air-gapped) — verify against pre-staged RIM files
+sudo -E ./AzureAttestSKR -a <maa> -k <key> -n <nonce> \
+  -g -M local -R /opt/cgpu/rims -s mysecret123 -w -V
 
-# Configure and build
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake ^
-      -DVCPKG_TARGET_TRIPLET=x64-windows-release ^
-      -DVCPKG_OVERLAY_TRIPLETS=triplets
-cmake --build build --config Release
+# Outpost — on-prem RIM + OCSP
+sudo -E ./AzureAttestSKR -a <maa> -k <key> -n <nonce> \
+  -g -M outpost -R https://rim.local -O https://ocsp.local -s mysecret123 -w -V
 ```
 
-The build output in `build/Release/` includes the executable, all required vcpkg DLLs, the AttestationClientLib DLL, and MSVC runtime DLLs — ready for xcopy deployment.
+`-V` prints the full MAA + GPU binding detail; `-X token.jwt` exports the bound
+MAA token (and writes the GPU detached EAT to `token.jwt.gpu-eat.jwt`) without
+releasing a key; `SKR_DUMP_TOKENS=1` dumps the full JWTs + GPU claims JSON.
 
-#### Linux Build — Classic vs Portable
+### Negative tests (the gate must block AKV)
+
+Each should exit `2` with **no AKV/IMDS traffic** (confirm with `SKR_TRACE_ON=1`):
+
+| Scenario | How to induce | Expected message |
+|----------|---------------|------------------|
+| No GPU / CC-mode off | run on a non-CGPU host | `GPU collect/verify failed` |
+| GPU unhealthy | bad/missing RIM (`-M local`) | `GPU unhealthy` |
+| Nonce mismatch (replay) | reuse a captured MAA token w/ fresh `-n` | `GPU not bound to this CVM` |
+| NRAS unreachable | block egress (`-M remote`) | collect/verify failed |
+| MAA fails | bad `-a` | exit 2, gate never runs |
+
+### End-to-end demo (`akv-sim-demo/`)
+
+`akv-sim-demo/run_demo.sh` runs the whole flow (binding gate → key release →
+decrypt → load model) and collects every token/policy/log into `out/<timestamp>/`.
+Select the CGPU mode and credentials via env vars:
+
+```sh
+# Credentials (NGC_SERV_KEY is accepted as an alias for NVAT_SERVICE_KEY)
+export NGC_API_KEY="nvapi-..."        # NGC API key (RIM fetch)
+export NGC_SERV_KEY="nvapi-..."       # NRAS service key (remote mode)
+
+# Remote (default)
+GPU_MODE=remote ./run_demo.sh
+
+# Local — point at a pre-staged RIM directory
+GPU_MODE=local GPU_RIM_DIR=/opt/cgpu/rims ./run_demo.sh
+
+# Outpost — defaults match the cgpu scripts; override if needed
+export NVAT_OUTPOST_NRAS_URL="https://nras.attestation.nvidia.com"
+export NVAT_OUTPOST_RIM_URL="http://localhost:8081/v1/rim/"
+export NVAT_OUTPOST_OCSP_URL="http://localhost:8081/"
+GPU_MODE=outpost ./run_demo.sh
+```
+
+---
+
+## Enhancements
+
+### Linux Build — Classic vs Portable
 
 The CMake file supports a **`SKR_PORTABLE_DEPLOY`** option (default `OFF`):
 
@@ -284,7 +359,7 @@ The application returns structured exit codes for programmatic callers:
 | 3 | `EXIT_AUTH_FAIL` | IMDS / AAD token acquisition failed |
 | 4 | `EXIT_SKR_FAIL` | AKV/MHSM SKR HTTP error (policy, 403, key not found) |
 | 5 | `EXIT_CRYPTO_FAIL` | OpenSSL error (decrypt, parse, unwrap) |
-| 6 | `EXIT_NETWORK_FAIL` | curl/WinHTTP transport failure |
+| 6 | `EXIT_NETWORK_FAIL` | curl transport failure |
 
 ### Cross-Distro SSL CA Bundle Fix
 
@@ -302,7 +377,7 @@ sudo ./AzureAttestSKR -a <url> -k <kek> -c imds -s <wrapped> -u 2>/dev/null | my
   Example:
 
   ```sh
-  sudo ./AzureAttestSKR -a "https://sharedweu.weu.attest.azure.net" -k "https://mykv.vault.azure.net/keys/mykey/version_GUID" -c "sp" -s "<copy_base64_from_previous_run>" -u
+  sudo ./AzureAttestSKR -a "https://ra26014b305c1c7c2c4521.eus2e.attest.azure.net" -k "https://mykv.vault.azure.net/keys/mykey/version_GUID" -c "sp" -s "<copy_base64_from_previous_run>" -u
   ```
 
 ## Debugging
@@ -311,8 +386,8 @@ To enable debug trace output, set the `SKR_TRACE_ON` environment variable at run
 
 ```sh
 # Level 1: full trace output
-sudo SKR_TRACE_ON=1 ./AzureAttestSKR -a "https://sharedweu.weu.attest.azure.net" -k "https://mykv.vault.azure.net/keys/mykey/version_GUID" -s mysecretkey123 -w
+sudo SKR_TRACE_ON=1 ./AzureAttestSKR -a "https://ra26014b305c1c7c2c4521.eus2e.attest.azure.net" -k "https://mykv.vault.azure.net/keys/mykey/version_GUID" -s mysecretkey123 -w
 
 # Level 2: trace with redacted sensitive values
-sudo  SKR_TRACE_ON=2 ./AzureAttestSKR -a "https://sharedweu.weu.attest.azure.net" -k "https://mykv.vault.azure.net/keys/mykey/version_GUID" -s mysecretkey123 -w
+sudo  SKR_TRACE_ON=2 ./AzureAttestSKR -a "https://ra26014b305c1c7c2c4521.eus2e.attest.azure.net" -k "https://mykv.vault.azure.net/keys/mykey/version_GUID" -s mysecretkey123 -w
 ```
