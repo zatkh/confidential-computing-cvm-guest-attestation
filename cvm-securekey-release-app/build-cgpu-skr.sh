@@ -214,9 +214,20 @@ build_nvat() {
       || git clone --depth 1 https://github.com/NVIDIA/attestation-sdk.git "$NVAT_SRC"
   fi
 
+  # libnvat statically embeds its own OpenSSL and, by default, EXPORTS those
+  # symbols. Once libnvat is loaded into the SKR process (as a NEEDED of the
+  # azguestattestation .so), its OpenSSL symbols interpose the system OpenSSL
+  # that libcurl uses for the MAA Attest() call, mixing two incompatible
+  # OpenSSL builds -> SIGSEGV inside curl_easy_init/OPENSSL_init_ssl.
+  #   --exclude-libs,ALL : give hidden visibility to all symbols pulled from
+  #                        static archives (the bundled OpenSSL), so libnvat no
+  #                        longer EXPORTS them -> system curl keeps system SSL.
+  #   -Bsymbolic[-functions] : bind libnvat's own internal references to its own
+  #                        (now hidden) OpenSSL, keeping it self-consistent.
   cmake -S "$NVAT_SRC/nv-attestation-sdk-cpp" -B "$NVAT_SRC/nv-attestation-sdk-cpp/build" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-    -DCMAKE_INSTALL_PREFIX="$NVAT_ROOT"
+    -DCMAKE_INSTALL_PREFIX="$NVAT_ROOT" \
+    -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--exclude-libs,ALL -Wl,-Bsymbolic -Wl,-Bsymbolic-functions"
   cmake --build "$NVAT_SRC/nv-attestation-sdk-cpp/build" -j"$JOBS"
   as_root cmake --install "$NVAT_SRC/nv-attestation-sdk-cpp/build"
   as_root ldconfig "$NVAT_ROOT/lib" "$NVAT_ROOT/lib64" 2>/dev/null || true

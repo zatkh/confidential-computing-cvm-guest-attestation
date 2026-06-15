@@ -124,10 +124,15 @@ if(UNIX)
         )
     endif()
 
-    # Azure Local CGPU binding: the SKR app consumes the binding gate purely
+    # Azure Local CGPU binding: the SKR app consumes the GPU binding gate purely
     # through the azguestattestation library's public API (ConfigureGpuBinding/
-    # CGpuAttest/GetLastGpuResult). All NVAT / GPU attestation code lives inside
-    # the .so, so the app does NOT link NVAT or the base attestation SDK here.
+    # CGpuAttest/GetLastGpuResult), so it does NOT link NVAT here. It DOES still
+    # link edge-cc-base-attestation-sdk because the app's own Azure Local SKR
+    # path (release_akv_key / hw_evidence_free in AttestationUtil.cpp) calls the
+    # Evidence SDK directly.
+    if(AZURE_LOCAL)
+        target_link_libraries(${CMAKE_PROJECT_TARGET} edge-cc-base-attestation-sdk)
+    endif()
 
 elseif(WIN32)
     # ===================================================================
