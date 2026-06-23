@@ -12,10 +12,11 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <json/json.h>
-#include <openssl/sha.h>
+#include <openssl/evp.h>
 
 namespace cgpu
 {
@@ -39,6 +40,20 @@ namespace cgpu
 
     namespace
     {
+        // SHA-256 over an ordered list of byte spans, using the OpenSSL 3.0 EVP
+        // API (the legacy SHA256_Init/Update/Final calls are deprecated since
+        // OpenSSL 3.0). Produces a 32-byte digest into out_digest.
+        void sha256(const std::vector<std::pair<const void *, size_t>> &parts,
+                    uint8_t out_digest[32])
+        {
+            EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+            EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr);
+            for (const auto &p : parts)
+                EVP_DigestUpdate(ctx, p.first, p.second);
+            EVP_DigestFinal_ex(ctx, out_digest, nullptr);
+            EVP_MD_CTX_free(ctx);
+        }
+
         // Extract the STABLE, security-relevant SEV-SNP identity of this CVM
         // from the MAA JWT payload. We deliberately bind only to the launch
         // identity (measurement), the per-launch report id and the host data,
@@ -132,22 +147,21 @@ namespace cgpu
                               uint8_t out_nonce[32])
         {
             std::string snp_identity;
-            SHA256_CTX ctx;
-            SHA256_Init(&ctx);
+            std::vector<std::pair<const void *, size_t>> parts;
+            static const char kCtxV2[] = "cgpu-binding-v2";
+            static const char kCtxV1[] = "cgpu-binding-v1";
             if (extract_snp_identity(nonce_token, snp_identity))
             {
-                static const char kCtx[] = "cgpu-binding-v2";
-                SHA256_Update(&ctx, kCtx, sizeof(kCtx) - 1);
-                SHA256_Update(&ctx, snp_identity.data(), snp_identity.size());
+                parts.emplace_back(kCtxV2, sizeof(kCtxV2) - 1);
+                parts.emplace_back(snp_identity.data(), snp_identity.size());
             }
             else
             {
-                static const char kCtx[] = "cgpu-binding-v1";
-                SHA256_Update(&ctx, kCtx, sizeof(kCtx) - 1);
-                SHA256_Update(&ctx, nonce_token.data(), nonce_token.size());
+                parts.emplace_back(kCtxV1, sizeof(kCtxV1) - 1);
+                parts.emplace_back(nonce_token.data(), nonce_token.size());
             }
-            SHA256_Update(&ctx, skr_nonce.data(), skr_nonce.size());
-            SHA256_Final(out_nonce, &ctx);
+            parts.emplace_back(skr_nonce.data(), skr_nonce.size());
+            sha256(parts, out_nonce);
         }
 
         // Attest-only (non-binding) nonce derivation. Used when GpuConfig::bind
@@ -163,11 +177,11 @@ namespace cgpu
         void derive_unbound_nonce(const std::string &skr_nonce, uint8_t out_nonce[32])
         {
             static const char kCtx[] = "cgpu-nobind-v1";
-            SHA256_CTX ctx;
-            SHA256_Init(&ctx);
-            SHA256_Update(&ctx, kCtx, sizeof(kCtx) - 1);
-            SHA256_Update(&ctx, skr_nonce.data(), skr_nonce.size());
-            SHA256_Final(out_nonce, &ctx);
+            std::vector<std::pair<const void *, size_t>> parts = {
+                {kCtx, sizeof(kCtx) - 1},
+                {skr_nonce.data(), skr_nonce.size()},
+            };
+            sha256(parts, out_nonce);
         }
     } // namespace
 
