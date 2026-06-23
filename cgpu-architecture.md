@@ -405,23 +405,3 @@ The gate runs after CVM attestation and before AKV; on any non-`Ok` `BindStatus`
 the key is not released. `PrintGpuBindingDetails` (with `-V`) shows the derived
 nonce, per-GPU bound/total + UEIDs, and the NVSwitch section when `-S` is used.
 
----
-
-## 13. Security properties
-
-- **Bound, not adjacent.** A stolen GPU EAT for a different CVM cannot pass: the
-  GPU must echo the nonce derived from *this* CVM's SNP launch identity.
-- **All-or-nothing population.** Multi-GPU and NVSwitch gates require every
-  collected device to be healthy and bound; optional count pins detect a
-  missing/hidden device.
-- **Fail-closed.** Any collection/verify error, unhealthy result, nonce
-  mismatch, or count mismatch returns an error and **no token / no key release**.
-- **Secrets off the command line.** `service_key_file` keeps the NRAS key out of
-  `argv` / `/proc/<pid>/cmdline`.
-- **Zero blast radius when disabled.** All new code is `AZURE_LOCAL`-gated and
-  only runs when binding is explicitly enabled; v1 behaviour is unchanged.
-
-### Out of scope
-- Proving physical PCIe attachment (requires PCIe IDE / TDISP).
-- Replacing AKV / mHSM — SKR is a *consumer* of the gate, not part of it.
-- Modifying NVAT itself.
