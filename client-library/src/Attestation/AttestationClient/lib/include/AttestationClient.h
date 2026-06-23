@@ -11,6 +11,11 @@
 #include "AttestationLibTypes.h"
 #include "TelemetryReportingBase.h"
 
+#ifdef AZURE_LOCAL
+#include "GpuAttestation.h"
+#include "CvmCgpuBinder.h"
+#endif
+
 #ifdef ATTESTATIONLIB_EXPORTS
 #define DllExports __declspec(dllexport)
 #else
@@ -99,6 +104,47 @@ public:
      * @param[in] ptr: Pointer to memory block previously allocated
      */
     virtual void Free(void* ptr) noexcept = 0;
+
+#ifdef AZURE_LOCAL
+    /**
+     * @brief Configure the CVM<->CGPU (NVIDIA GPU) binding gate. Azure Local only.
+     * When enabled, Attest() will, after a successful CVM attestation and before
+     * returning the token, attest the local NVIDIA GPU and verify it is bound to
+     * this CVM. If the GPU is unhealthy or not bound, Attest() returns an error
+     * and no token is produced (so the caller never proceeds to key release).
+     * @param[in] enabled Whether the binding gate is active.
+     * @param[in] mode GPU verifier mode (remote / local / outpost).
+     * @param[in] cfg Mode-specific endpoints/paths.
+     */
+    virtual void ConfigureGpuBinding(bool enabled,
+                                     cgpu::GpuMode mode,
+                                     const cgpu::GpuConfig& cfg) noexcept = 0;
+
+    /**
+     * @brief Attest the local NVIDIA GPU and verify it is bound to this CVM,
+     * given an already-issued CVM attestation token. Azure Local only. Uses the
+     * mode/config set via ConfigureGpuBinding(). This is the GPU counterpart of
+     * Attest(). GPU verification goes to NRAS (remote/outpost) or the local
+     * verifier (RIM cache dir or Outpost RIM endpoint + OCSP endpoint); the
+     * token is used only locally to derive the GPU binding nonce.
+     * @param[in] nonce_token The CVM attestation JWT obtained from Attest();
+     * used only to derive the binding nonce, never sent to the GPU verifier.
+     * @param[in] skr_nonce Session nonce mixed into the GPU binding nonce.
+     * @param[out] out_result Optional detail of the GPU attestation/binding.
+     * @return SUCCESS only if the GPU is healthy and bound to this CVM.
+     */
+    virtual attest::AttestationResult CGpuAttest(const std::string& nonce_token,
+                                                 const std::string& skr_nonce,
+                                                 cgpu::GpuResult* out_result) noexcept = 0;
+
+    /**
+     * @brief Retrieve the GPU attestation/binding result produced by the most
+     * recent Attest() (or CGpuAttest()) call. Azure Local only.
+     * @param[out] out_result Receives the last GPU result.
+     * @return true if a result was available and copied.
+     */
+    virtual bool GetLastGpuResult(cgpu::GpuResult* out_result) noexcept = 0;
+#endif // AZURE_LOCAL
 };
 
 extern "C" {

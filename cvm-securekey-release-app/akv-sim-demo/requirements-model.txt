@@ -1,0 +1,8 @@
+# Extra deps to actually LOAD the decrypted Phi-4-mini on the GPU.
+# Install the CUDA-matching torch build for your platform if the default wheel
+# does not match the driver. On this node (H100, CUDA 12.x) the default cu12x
+# wheels work.
+torch>=2.2.0
+transformers>=4.44.0
+accelerate>=0.30.0
+safetensors>=0.4.0

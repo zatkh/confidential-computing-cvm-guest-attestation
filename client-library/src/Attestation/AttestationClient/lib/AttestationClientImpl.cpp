@@ -198,12 +198,84 @@ AttestationResult AttestationClientImpl::Attest(const ClientParameters& client_p
         break;
     }
 
+#ifdef AZURE_LOCAL
+    // CVM<->CGPU binding gate (Azure Local only). Runs AFTER a successful CVM
+    // attestation and BEFORE the token is returned to the caller (i.e. before
+    // any downstream key-release / AKV call). If the local NVIDIA GPU is
+    // unhealthy or not bound to this CVM, return an error and no token. When
+    // binding is not configured, the flow is identical to the CVM-only build.
+    if (gpu_binding_enabled_) {
+        // The GPU binding nonce is mixed with the SKR session nonce, which the
+        // caller passes through client_payload as {"nonce": "..."}.
+        std::string skr_nonce;
+        std::unordered_map<std::string, std::string> client_payload_map;
+        if (ParseClientPayload(client_params.client_payload, client_payload_map).code_ ==
+                AttestationResult::ErrorCode::SUCCESS) {
+            auto it = client_payload_map.find("nonce");
+            if (it != client_payload_map.end()) {
+                skr_nonce = it->second;
+            }
+        }
+
+        AttestationResult bind_result = CGpuAttest(token_decrypted, skr_nonce, &last_gpu_result_);
+        has_gpu_result_ = true;
+        if (bind_result.code_ != AttestationResult::ErrorCode::SUCCESS) {
+            CLIENT_LOG_ERROR("CVM<->CGPU binding failed: %s", bind_result.description_.c_str());
+            return bind_result;
+        }
+    }
+#endif // AZURE_LOCAL
+
     unsigned char *jwt_token = (unsigned char*) malloc((sizeof(unsigned char) * token_decrypted.size()) + 1); // allocating an extra byte for the null char at the end
     std::memcpy(jwt_token, token_decrypted.data(), token_decrypted.size());
     jwt_token[token_decrypted.size()] = '\0';
     *jwt_token_out = jwt_token;
     return result;
 }
+
+#ifdef AZURE_LOCAL
+void AttestationClientImpl::ConfigureGpuBinding(bool enabled,
+                                                cgpu::GpuMode mode,
+                                                const cgpu::GpuConfig& cfg) noexcept {
+    gpu_binding_enabled_ = enabled;
+    gpu_mode_ = mode;
+    gpu_cfg_ = cfg;
+}
+
+AttestationResult AttestationClientImpl::CGpuAttest(const std::string& nonce_token,
+                                                    const std::string& skr_nonce,
+                                                    cgpu::GpuResult* out_result) noexcept {
+    AttestationResult result(AttestationResult::ErrorCode::SUCCESS);
+
+    cgpu::GpuResult gpu;
+    cgpu::BindStatus bs = cgpu::cvm_cgpu_bind(nonce_token, gpu_mode_, gpu_cfg_, skr_nonce, &gpu);
+
+    last_gpu_result_ = gpu;
+    has_gpu_result_ = true;
+    if (out_result != nullptr) {
+        *out_result = gpu;
+    }
+
+    if (bs != cgpu::BindStatus::Ok) {
+        std::string detail = cgpu::bind_status_to_string(bs);
+        if (!gpu.error.empty()) {
+            detail += " (" + gpu.error + ")";
+        }
+        result.code_ = AttestationResult::ErrorCode::ERROR_ATTESTATION_FAILED;
+        result.description_ = std::string("CVM/CGPU binding failed: ") + detail;
+    }
+
+    return result;
+}
+
+bool AttestationClientImpl::GetLastGpuResult(cgpu::GpuResult* out_result) noexcept {
+    if (out_result == nullptr || !has_gpu_result_) {
+        return false;
+    }
+    *out_result = last_gpu_result_;
+    return true;
+}
+#endif // AZURE_LOCAL
 
 AttestationResult AttestationClientImpl::Encrypt(const attest::EncryptionType encryption_type,
                                                  const unsigned char* jwt_token,

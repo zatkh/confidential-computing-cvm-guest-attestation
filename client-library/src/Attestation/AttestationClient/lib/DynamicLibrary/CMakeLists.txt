@@ -14,6 +14,27 @@ add_definitions (-DPLATFORM_UNIX)
 if(AZURE_LOCAL)
     add_compile_definitions(AZURE_LOCAL)
     message(STATUS "Azure Local mode: ENABLED")
+
+    # CVM<->CGPU binding links the NVIDIA Attestation SDK (NVAT). Allow an
+    # explicit NVAT_ROOT hint; otherwise search standard install prefixes.
+    find_path(NVAT_INCLUDE_DIR
+        NAMES nvat.h
+        HINTS ${NVAT_ROOT} ENV NVAT_ROOT
+        PATH_SUFFIXES include
+    )
+    find_library(NVAT_LIBRARY
+        NAMES nvat libnvat
+        HINTS ${NVAT_ROOT} ENV NVAT_ROOT
+        PATH_SUFFIXES lib lib64
+    )
+    if(NOT NVAT_INCLUDE_DIR OR NOT NVAT_LIBRARY)
+        message(FATAL_ERROR
+            "AZURE_LOCAL=ON but NVAT not found.\n"
+            "Build/install the NVIDIA Attestation SDK C++ (libnvat) and pass\n"
+            "  -DNVAT_ROOT=/path/to/nvat/install\n"
+            "(expects <root>/include/nvat.h and <root>/lib/libnvat.so).")
+    endif()
+    message(STATUS "CGPU binding: ENABLED (NVAT=${NVAT_LIBRARY})")
 else()
     message(STATUS "Azure Local mode: DISABLED")
 endif()
@@ -51,6 +72,9 @@ add_library(${CMAKE_PROJECT_TARGET} SHARED ../../AttestationHelper.cpp
                                            ../TpmCertOperations.cpp
                                            ../ImdsClient.cpp
                                            ../AttestationLibTelemetry.cpp
+                                           ../GpuAttestation.cpp
+                                           ../GpuConfigFile.cpp
+                                           ../CvmCgpuBinder.cpp
                                            ${CMAKE_SOURCE_DIR}/../external/jsoncpp-0.10.7/src/jsoncpp.cpp)
                                            
 find_library(CURL_LIB NAMES curl PATHS /usr/local/attestationcurl/lib
@@ -60,7 +84,9 @@ target_link_libraries(${CMAKE_PROJECT_TARGET} Tpm2)
 target_link_libraries(${CMAKE_PROJECT_TARGET} ${CURL_LIB})
 
 if(AZURE_LOCAL)
+    target_include_directories(${CMAKE_PROJECT_TARGET} PRIVATE ${NVAT_INCLUDE_DIR})
     target_link_libraries(${CMAKE_PROJECT_TARGET} edge-cc-base-attestation-sdk)
+    target_link_libraries(${CMAKE_PROJECT_TARGET} ${NVAT_LIBRARY})
 endif()
 
 set_target_properties(${CMAKE_PROJECT_TARGET} PROPERTIES VERSION ${PROJECT_VERSION})

@@ -52,6 +52,9 @@ add_executable(${CMAKE_PROJECT_TARGET} ClientLibTests.cpp
                                        ../../lib/TpmCertOperations.cpp
                                        ../../lib/ImdsClient.cpp
                                        ../../lib/AttestationLibTelemetry.cpp
+                                       ../../lib/GpuAttestation.cpp
+                                       ../../lib/GpuConfigFile.cpp
+                                       ../../lib/CvmCgpuBinder.cpp
                                        ${CMAKE_SOURCE_DIR}/../external/jsoncpp-0.10.7/src/jsoncpp.cpp)
 
 find_library(CURL_LIB NAMES curl PATHS /usr/local/attestationcurl/lib
@@ -69,5 +72,25 @@ target_link_libraries(${CMAKE_PROJECT_TARGET} ${CURL_LIB} z)
 target_link_libraries(${CMAKE_PROJECT_TARGET} ${SSL_LIB})
 
 if(AZURE_LOCAL)
+    # The test exe compiles AttestationClientImpl.cpp (with the AZURE_LOCAL
+    # CGPU binding gate) + GpuAttestation.cpp + CvmCgpuBinder.cpp directly, so
+    # it must also find/link the NVIDIA attestation SDK (NVAT), same as the
+    # DynamicLibrary build. NVAT_ROOT (cache var or env) hints the location.
+    find_path(NVAT_INCLUDE_DIR
+        NAMES nvat.h
+        HINTS ${NVAT_ROOT} ENV NVAT_ROOT
+        PATH_SUFFIXES include)
+    find_library(NVAT_LIBRARY
+        NAMES nvat libnvat
+        HINTS ${NVAT_ROOT} ENV NVAT_ROOT
+        PATH_SUFFIXES lib lib64)
+    if(NOT NVAT_INCLUDE_DIR OR NOT NVAT_LIBRARY)
+        message(FATAL_ERROR
+            "AZURE_LOCAL=ON but NVAT not found.\n"
+            "  Set NVAT_ROOT to the NVAT install prefix, e.g.\n"
+            "  -DNVAT_ROOT=/path/to/nvat/install")
+    endif()
+    target_include_directories(${CMAKE_PROJECT_TARGET} PRIVATE ${NVAT_INCLUDE_DIR})
     target_link_libraries(${CMAKE_PROJECT_TARGET} edge-cc-base-attestation-sdk)
+    target_link_libraries(${CMAKE_PROJECT_TARGET} ${NVAT_LIBRARY})
 endif()

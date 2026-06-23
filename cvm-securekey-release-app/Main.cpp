@@ -24,7 +24,6 @@
 #include <AttestationClient.h>
 #include "AttestationUtil.h"
 #include "Constants.h"
-
 #ifdef PLATFORM_UNIX
 #include <unistd.h> // getopt, optarg, optind, symlink
 #include <sys/stat.h>
@@ -142,6 +141,33 @@ void usage(char *programName)
     printf("\tHash algorithm options (for -u/-B unwrap only):\n");
     printf("\t\t-H <hash>  OAEP hash algorithm: sha1, sha256, sha384, sha512 (default: sha256)\n");
     printf("\t\t-G <hash>  MGF1 hash algorithm: sha1, sha256, sha384, sha512 (default: same as -H)\n");
+#ifdef AZURE_LOCAL
+    printf("\n");
+    printf("\tPlan C CVM<->CGPU binding (gate the SKR on a healthy, bound NVIDIA GPU):\n");
+    printf("\t\t-g            Enable CGPU binding (gate AKV on GPU attestation)\n");
+    printf("\t\t-b            Attest the GPU but do NOT bind it to this CVM (CVM and GPU\n");
+    printf("\t\t              attested independently; default is to bind)\n");
+    printf("\t\t-M <mode>     GPU verifier mode: remote | local | outpost (default: remote)\n");
+    printf("\t\t-R <path|uri> RIM source: RIM dir (local) or Trust Outpost RIM URL (outpost)\n");
+    printf("\t\t-O <path|uri> OCSP source: cached-response dir (local) or Trust Outpost OCSP URL (outpost)\n");
+    printf("\t\t-K <key>      NRAS service key (remote/outpost; or env NVAT_SERVICE_KEY)\n");
+    printf("\t\t-m            Multi-GPU: require EVERY GPU (not just GPU 0) to be bound\n");
+    printf("\t\t-N <count>    Multi-GPU: require exactly <count> GPUs present (0 = any)\n");
+    printf("\t\t-S            Also attest the NVLink/NVSwitch fabric (HGX / Blackwell NVL)\n");
+    printf("\t\t-T <count>    NVSwitch: require exactly <count> NVSwitches present (0 = any)\n");
+    printf("\t\t-C <file>     Load GPU binding policy from a JSON config file (base policy;\n");
+    printf("\t\t              CLI flags override it). Lets the NRAS service key be supplied\n");
+    printf("\t\t              via a file path (service_key_file) instead of on the command line.\n");
+#endif
+    printf("\n");
+    printf("\tExport a binding-gated MAA token (no AKV; for the AKV-simulator PoC):\n");
+    printf("\t\t%s -a <attestation-endpoint> -n <optional-nonce> -g -M <mode> -X <token-out-path>\n", programName);
+    printf("\t\t (writes the verified MAA token to <token-out-path> and exits 0 only if attestation\n");
+    printf("\t\t  and CGPU binding pass; otherwise exits non-zero and writes nothing)\n");
+    printf("\n");
+    printf("\tVerbose hardware / attestation details:\n");
+    printf("\t\t-V            Print CVM SEV-SNP claims, MAA token info, GPU attestation\n");
+    printf("\t\t              results and the derived CGPU binding nonce (or env SKR_SHOW_DETAILS=1)\n");
 }
 
 enum class Operation
@@ -151,6 +177,7 @@ enum class Operation
     UnwrapKey,
     BatchUnwrap,
     ReleaseKey,
+    ExportToken,
     Undefined
 };
 
@@ -181,6 +208,18 @@ int main(int argc, char *argv[])
 #endif
     set_tracing();
     TRACE_OUT("Main started");
+    // Allow enabling verbose attestation details via env (in addition to -V).
+    {
+        const char *show = std::getenv("SKR_SHOW_DETAILS");
+        if (show != nullptr && (strcmp(show, "1") == 0 || strcmp(show, "true") == 0))
+            Util::g_print_details = true;
+        const char *dump = std::getenv("SKR_DUMP_TOKENS");
+        if (dump != nullptr && (strcmp(dump, "1") == 0 || strcmp(dump, "true") == 0))
+        {
+            Util::g_dump_tokens = true;
+            Util::g_print_details = true; // dumping implies showing details
+        }
+    }
     std::string attestation_url;
     std::string nonce;
     std::string sym_key;
@@ -191,8 +230,27 @@ int main(int argc, char *argv[])
     Operation op = Operation::None;
     Util::AkvCredentialSource akv_credential_source = Util::AkvCredentialSource::Imds;
 
+#ifdef AZURE_LOCAL
+    bool gpu_binding = false;
+    std::string gpu_mode_str = "remote";
+    bool gpu_mode_set = false; // -M explicitly passed (drives endpoint mapping)
+    bool gpu_no_bind = false;  // -b: attest GPU only, do NOT bind it to this CVM
+    std::string gpu_rim;   // -R: RIM dir (local) or Trust Outpost RIM URL (outpost)
+    std::string gpu_ocsp;  // -O: OCSP cache dir (local) or Trust Outpost OCSP URL (outpost)
+    std::string gpu_key;   // -K: NRAS service key (remote/outpost)
+    bool gpu_multi = false;       // -m: require every GPU bound (multi-GPU CVMs)
+    int  gpu_expected_count = 0;  // -N: require exactly this many GPUs (0 = any)
+    bool gpu_nvswitch = false;    // -S: also attest the NVLink/NVSwitch fabric
+    int  gpu_switch_count = 0;    // -T: require exactly this many NVSwitches (0 = any)
+    std::string gpu_config_file;  // -C: JSON config file (secrets-via-file friendly)
+#define SKR_GETOPT_STR "a:n:k:c:s:uwrB:H:G:gbM:R:O:K:mN:ST:C:X:V"
+#else
+#define SKR_GETOPT_STR "a:n:k:c:s:uwrB:H:G:X:V"
+#endif
+    std::string export_token_path; // -X: write binding-gated MAA token here (no AKV)
+
     int opt;
-    while ((opt = getopt(argc, argv, "a:n:k:c:s:uwrB:H:G:")) != -1)
+    while ((opt = getopt(argc, argv, SKR_GETOPT_STR)) != -1)
     {
         switch (opt)
         {
@@ -244,10 +302,66 @@ int main(int argc, char *argv[])
             oaep_hash.assign(optarg);
             TRACE_OUT("oaep_hash: %s", oaep_hash.c_str());
             break;
+        case 'X':
+            export_token_path.assign(optarg);
+            op = Operation::ExportToken;
+            TRACE_OUT("op: ExportToken, path: %s", export_token_path.c_str());
+            break;
+        case 'V':
+            Util::g_print_details = true;
+            TRACE_OUT("verbose attestation details: enabled");
+            break;
         case 'G':
             mgf1_hash.assign(optarg);
             TRACE_OUT("mgf1_hash: %s", mgf1_hash.c_str());
             break;
+#ifdef AZURE_LOCAL
+        case 'g':
+            gpu_binding = true;
+            TRACE_OUT("gpu_binding: enabled");
+            break;
+        case 'b':
+            gpu_no_bind = true;
+            TRACE_OUT("gpu_no_bind: attest GPU only (no CVM binding)");
+            break;
+        case 'M':
+            gpu_mode_str.assign(optarg);
+            gpu_mode_set = true;
+            TRACE_OUT("gpu_mode: %s", gpu_mode_str.c_str());
+            break;
+        case 'R':
+            gpu_rim.assign(optarg);
+            TRACE_OUT("gpu_rim: %s", gpu_rim.c_str());
+            break;
+        case 'O':
+            gpu_ocsp.assign(optarg);
+            TRACE_OUT("gpu_ocsp: %s", gpu_ocsp.c_str());
+            break;
+        case 'K':
+            gpu_key.assign(optarg);
+            TRACE_OUT("gpu_key: <set>");
+            break;
+        case 'm':
+            gpu_multi = true;
+            TRACE_OUT("gpu_multi: enabled");
+            break;
+        case 'N':
+            gpu_expected_count = atoi(optarg);
+            TRACE_OUT("gpu_expected_count: %d", gpu_expected_count);
+            break;
+        case 'S':
+            gpu_nvswitch = true;
+            TRACE_OUT("gpu_nvswitch: enabled");
+            break;
+        case 'T':
+            gpu_switch_count = atoi(optarg);
+            TRACE_OUT("gpu_switch_count: %d", gpu_switch_count);
+            break;
+        case 'C':
+            gpu_config_file.assign(optarg);
+            TRACE_OUT("gpu_config_file: %s", gpu_config_file.c_str());
+            break;
+#endif
         case ':':
             std::cerr << "Option needs a value" << std::endl;
             return EXIT_FAILURE;
@@ -261,6 +375,83 @@ int main(int argc, char *argv[])
     int retVal = 0;
     try
     {
+#ifdef AZURE_LOCAL
+        // Wire Plan C CGPU binding config into Util. Consumed by GetMAAToken(),
+        // which configures the library binding gate before calling Attest().
+        //
+        // Precedence: an optional JSON config file (-C) supplies the base policy
+        // (and can carry the NRAS service key via a FILE path, keeping it out of
+        // argv / /proc/<pid>/cmdline); CLI flags then override it. Without -C,
+        // the CLI flags alone drive the config exactly as before.
+        if (gpu_binding || !gpu_config_file.empty())
+        {
+            // 1. Config file (if any) provides the base policy.
+            if (!gpu_config_file.empty())
+            {
+                cgpu::GpuConfigFile fc;
+                std::string cfg_err;
+                if (!cgpu::load_gpu_config_file(gpu_config_file, fc, &cfg_err))
+                {
+                    std::cerr << "Failed to load GPU config file: " << cfg_err << std::endl;
+                    return EXIT_FAILURE;
+                }
+                Util::g_gpu_binding_enabled = fc.enabled;
+                Util::g_gpu_mode = fc.mode;
+                Util::g_gpu_cfg = fc.cfg;
+            }
+
+            // 2. CLI flags override the config file. -g forces binding on; -m/-N
+            //    always tighten the multi-GPU gate regardless of source; -S/-T
+            //    add/​tighten the NVLink/NVSwitch fabric gate.
+            if (gpu_binding)
+                Util::g_gpu_binding_enabled = true;
+            if (gpu_no_bind)
+                Util::g_gpu_cfg.bind = false; // attest GPU only, do not bind to this CVM
+            if (gpu_multi)
+                Util::g_gpu_cfg.multi_gpu = true;
+            if (gpu_expected_count > 0)
+                Util::g_gpu_cfg.expected_gpu_count = static_cast<size_t>(gpu_expected_count);
+            if (gpu_nvswitch)
+                Util::g_gpu_cfg.attest_nvswitch = true;
+            if (gpu_switch_count > 0)
+                Util::g_gpu_cfg.expected_switch_count = static_cast<size_t>(gpu_switch_count);
+
+            // Re-map mode + endpoints from the CLI when no config file is used
+            // (preserving the original behaviour, mode defaulting to remote) or
+            // when -M is explicitly passed to override the file's mode. When a
+            // config file is used WITHOUT -M, the file's mode/endpoints stand.
+            if (gpu_config_file.empty() || gpu_mode_set)
+            {
+                if (gpu_mode_str == "local")
+                {
+                    // Local = fully air-gapped in-guest verifier. -R is the
+                    // filesystem RIM directory; -O (optional) is a directory of
+                    // cached OCSP responses (turned into a file:// URL). With no
+                    // -O the NVIDIA default OCSP is used (needs network).
+                    Util::g_gpu_mode = cgpu::GpuMode::Local;
+                    Util::g_gpu_cfg.rim_dir = gpu_rim;
+                    Util::g_gpu_cfg.ocsp_dir = gpu_ocsp;
+                }
+                else if (gpu_mode_str == "outpost")
+                {
+                    // Outpost = NRAS (remote) verifier with RIM/OCSP served by an
+                    // on-prem NVIDIA Trust Outpost. -R/-O point at the Outpost RIM/
+                    // OCSP; the NRAS base URL comes from NVAT_OUTPOST_NRAS_URL (env)
+                    // and the service key from -K / NVAT_SERVICE_KEY.
+                    Util::g_gpu_mode = cgpu::GpuMode::Outpost;
+                    Util::g_gpu_cfg.rim_uri = gpu_rim;
+                    Util::g_gpu_cfg.ocsp_uri = gpu_ocsp;
+                    Util::g_gpu_cfg.service_key = gpu_key;
+                }
+                else // remote (default)
+                {
+                    Util::g_gpu_mode = cgpu::GpuMode::Remote;
+                    Util::g_gpu_cfg.nras_url = gpu_rim; // optional NRAS base URL override
+                    Util::g_gpu_cfg.service_key = gpu_key;
+                }
+            }
+        }
+#endif
         std::string result;
         switch (op)
         {
@@ -307,6 +498,10 @@ int main(int argc, char *argv[])
         }
         case Operation::ReleaseKey:
             success = Util::ReleaseKey(attestation_url, nonce, key_enc_key_url, akv_credential_source);
+            retVal = success ? EXIT_SUCCESS : EXIT_FAILURE;
+            break;
+        case Operation::ExportToken:
+            success = Util::ExportBoundToken(attestation_url, nonce, export_token_path);
             retVal = success ? EXIT_SUCCESS : EXIT_FAILURE;
             break;
         default:

@@ -109,6 +109,30 @@ public:
      */
     virtual void Free(void* ptr) noexcept override;
 
+#ifdef AZURE_LOCAL
+    /**
+     * @brief Configure the CVM<->CGPU binding gate (Azure Local only). See
+     * AttestationClient::ConfigureGpuBinding().
+     */
+    void ConfigureGpuBinding(bool enabled,
+                             cgpu::GpuMode mode,
+                             const cgpu::GpuConfig& cfg) noexcept override;
+
+    /**
+     * @brief Attest the local NVIDIA GPU and verify it is bound to this CVM
+     * (Azure Local only). See AttestationClient::CGpuAttest().
+     */
+    attest::AttestationResult CGpuAttest(const std::string& nonce_token,
+                                         const std::string& skr_nonce,
+                                         cgpu::GpuResult* out_result) noexcept override;
+
+    /**
+     * @brief Retrieve the last GPU attestation/binding result (Azure Local only).
+     * See AttestationClient::GetLastGpuResult().
+     */
+    bool GetLastGpuResult(cgpu::GpuResult* out_result) noexcept override;
+#endif // AZURE_LOCAL
+
     /**
      * @brief This function will be used to Decrypt a JWT token received from
      * AAS.
@@ -260,4 +284,13 @@ private:
                                               std::string& response);  
 
     std::string attestation_url_;
+
+#ifdef AZURE_LOCAL
+    // CVM<->CGPU binding configuration + last result (Azure Local only).
+    bool            gpu_binding_enabled_ = false;
+    cgpu::GpuMode   gpu_mode_ = cgpu::GpuMode::Remote;
+    cgpu::GpuConfig gpu_cfg_{};
+    cgpu::GpuResult last_gpu_result_{};
+    bool            has_gpu_result_ = false;
+#endif // AZURE_LOCAL
 };

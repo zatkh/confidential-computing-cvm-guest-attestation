@@ -21,6 +21,12 @@ while getopts ":hdl" opt; do
       l )
         CMAKE_BUILDTYPE_OPT="${CMAKE_BUILDTYPE_OPT} -DAZURE_LOCAL=ON"
         echo "Azure Local = ON"
+        # CGPU binding requires the NVIDIA attestation SDK (NVAT). Forward
+        # NVAT_ROOT (env) to CMake so it can locate nvat.h / libnvat.
+        if [ -n "${NVAT_ROOT}" ]; then
+            CMAKE_BUILDTYPE_OPT="${CMAKE_BUILDTYPE_OPT} -DNVAT_ROOT=${NVAT_ROOT}"
+            echo "NVAT_ROOT = ${NVAT_ROOT}"
+        fi
       ;;
     \? )
         Usage
@@ -57,6 +63,9 @@ cd ${ATTESTATION_LIB_SHARED_DIR}
 
 cp ${BUILD_DIR}/AttestationClient/lib/DynamicLibrary/libazguestattestation.so.${VERSION} ${PACKAGE_DIR}
 
-./createDebPackage.sh
+# Invoke via `bash` so the build does not depend on the script's execute bit,
+# which can be lost on checkouts from filesystems that don't track it (e.g.
+# Windows / some network shares).
+bash ./createDebPackage.sh
 
 popd

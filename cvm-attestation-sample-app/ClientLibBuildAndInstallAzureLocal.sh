@@ -34,5 +34,9 @@ if [ "$INSTALL_PREREQS" = true ]; then
     sudo ../client-library/src/Attestation/pre-requisites-azure-local.sh
 fi
 
-sudo ../client-library/src/Attestation/build.sh -l
+# CGPU binding links the NVIDIA attestation SDK (NVAT) into the library .so.
+# Forward NVAT_ROOT through sudo (which otherwise scrubs the environment) so
+# the CMake find_path/find_library can locate nvat.h / libnvat. `sudo env VAR=`
+# works regardless of the sudoers SETENV policy.
+sudo env NVAT_ROOT="${NVAT_ROOT}" ../client-library/src/Attestation/build.sh -l
 sudo dpkg -i ../client-library/src/Attestation/_build/x86_64/packages/attestationlibrary/deb/azguestattestation1_1.0.5_amd64.deb

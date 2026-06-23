@@ -1,0 +1,153 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1200" viewBox="0 0 1920 1200" role="img" aria-label="CVM and CGPU bounded SKR component architecture">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f8fbff"/>
+      <stop offset="100%" stop-color="#edf4ff"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 z" fill="#355070"/>
+    </marker>
+    <style>
+      .title { font: 700 38px 'Segoe UI', Arial, sans-serif; fill: #14213d; }
+      .subtitle { font: 500 20px 'Segoe UI', Arial, sans-serif; fill: #3a506b; }
+      .zone-title { font: 700 24px 'Segoe UI', Arial, sans-serif; fill: #0b2545; }
+      .node-title { font: 700 20px 'Segoe UI', Arial, sans-serif; fill: #0b2545; }
+      .node-body { font: 500 16px 'Segoe UI', Arial, sans-serif; fill: #1f3b57; }
+      .legend { font: 600 16px 'Segoe UI', Arial, sans-serif; fill: #14304f; }
+      .arrow-label { font: 600 15px 'Segoe UI', Arial, sans-serif; fill: #14304f; }
+      .zone { fill: #ffffff; stroke: #b9d2ea; stroke-width: 2.5; }
+      .node { fill: #ffffff; stroke: #7aa6d0; stroke-width: 2; rx: 16; }
+      .node-accent { fill: #f0f7ff; stroke: #5b8fb9; stroke-width: 2; rx: 16; }
+      .node-trust { fill: #f6fbf6; stroke: #7fb685; stroke-width: 2; rx: 16; }
+      .line { stroke: #355070; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .line-dash { stroke: #355070; stroke-width: 3; fill: none; stroke-dasharray: 10 8; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1920" height="1200" fill="url(#bg)"/>
+
+  <text x="80" y="70" class="title">CVM + CGPU Bounded SKR: Component Architecture</text>
+  <text x="80" y="104" class="subtitle">Production view with Azure Guest SDK + integrated NVIDIA attestation path</text>
+
+  <rect class="zone" x="60" y="140" width="860" height="980" rx="24"/>
+  <text x="90" y="180" class="zone-title">Confidential VM (Guest)</text>
+
+  <rect class="zone" x="960" y="140" width="400" height="980" rx="24"/>
+  <text x="990" y="180" class="zone-title">Azure Local Host Plane</text>
+
+  <rect class="zone" x="1400" y="140" width="460" height="980" rx="24"/>
+  <text x="1430" y="180" class="zone-title">External Trust Services</text>
+
+  <rect class="node-accent" x="110" y="220" width="300" height="110"/>
+  <text x="130" y="258" class="node-title">SKR Service API</text>
+  <text x="130" y="286" class="node-body">Model key release orchestration</text>
+
+  <rect class="node" x="470" y="220" width="390" height="180"/>
+  <text x="490" y="258" class="node-title">Azure Guest Attestation SDK</text>
+  <text x="490" y="286" class="node-body">AttestationClient::Attest</text>
+  <text x="490" y="312" class="node-body">SEV-SNP + vTPM evidence path</text>
+  <text x="490" y="338" class="node-body">MAA token retrieval and validation</text>
+
+  <rect class="node" x="110" y="390" width="750" height="320"/>
+  <text x="130" y="430" class="node-title">Integrated CVM to CGPU Binding Gate (inside Guest SDK path)</text>
+
+  <rect class="node-accent" x="140" y="460" width="220" height="210"/>
+  <text x="160" y="496" class="node-title">Binding Logic</text>
+  <text x="160" y="524" class="node-body">Derive gpu_nonce</text>
+  <text x="160" y="548" class="node-body">from MAA token + nonce</text>
+  <text x="160" y="576" class="node-body">Checks:</text>
+  <text x="180" y="602" class="node-body">- overall_result</text>
+  <text x="180" y="626" class="node-body">- nonce_match</text>
+
+  <rect class="node" x="390" y="460" width="220" height="210"/>
+  <text x="410" y="496" class="node-title">NVIDIA Adapter</text>
+  <text x="410" y="524" class="node-body">GpuAttestation</text>
+  <text x="410" y="548" class="node-body">mode selection</text>
+  <text x="410" y="572" class="node-body">remote | local | outpost</text>
+
+  <rect class="node" x="640" y="460" width="190" height="210"/>
+  <text x="660" y="496" class="node-title">libnvat SDK</text>
+  <text x="660" y="524" class="node-body">Collect evidence</text>
+  <text x="660" y="548" class="node-body">Verify evidence</text>
+  <text x="660" y="572" class="node-body">Claims + EAT</text>
+
+  <rect class="node" x="110" y="750" width="300" height="160"/>
+  <text x="130" y="788" class="node-title">Key Handling Service</text>
+  <text x="130" y="816" class="node-body">Key unwrap and decrypt</text>
+  <text x="130" y="842" class="node-body">AES/GCM model payload</text>
+
+  <rect class="node" x="470" y="750" width="390" height="160"/>
+  <text x="490" y="788" class="node-title">AI Runtime</text>
+  <text x="490" y="816" class="node-body">Loads plaintext model weights</text>
+  <text x="490" y="842" class="node-body">Executes inference on CGPU</text>
+
+  <rect class="node" x="110" y="940" width="750" height="140"/>
+  <text x="130" y="980" class="node-title">Trusted Devices in CVM</text>
+  <text x="130" y="1008" class="node-body">vTPM + SEV-SNP guest report source and Confidential GPU device(s)</text>
+
+  <rect class="node" x="1010" y="260" width="300" height="160"/>
+  <text x="1030" y="298" class="node-title">IGVM Agent</text>
+  <text x="1030" y="326" class="node-body">Host-brokered attestation</text>
+  <text x="1030" y="352" class="node-body">and AKV key release</text>
+
+  <rect class="node" x="1010" y="470" width="300" height="130"/>
+  <text x="1030" y="508" class="node-title">Cluster Identity</text>
+  <text x="1030" y="536" class="node-body">Managed identity for AKV</text>
+
+  <rect class="node-trust" x="1450" y="220" width="360" height="130"/>
+  <text x="1470" y="258" class="node-title">Microsoft Attestation (MAA)</text>
+  <text x="1470" y="286" class="node-body">CVM token issuer</text>
+
+  <rect class="node-trust" x="1450" y="390" width="360" height="150"/>
+  <text x="1470" y="428" class="node-title">Azure Key Vault / mHSM</text>
+  <text x="1470" y="456" class="node-body">Policy-enforced key release</text>
+  <text x="1470" y="482" class="node-body">for model decryption</text>
+
+  <rect class="node-trust" x="1450" y="590" width="360" height="130"/>
+  <text x="1470" y="628" class="node-title">NVIDIA NRAS</text>
+  <text x="1470" y="656" class="node-body">Remote evidence appraisal</text>
+
+  <rect class="node-trust" x="1450" y="760" width="360" height="130"/>
+  <text x="1470" y="798" class="node-title">RIM Service / Local RIM Store</text>
+  <text x="1470" y="826" class="node-body">Reference manifests</text>
+
+  <rect class="node-trust" x="1450" y="930" width="360" height="130"/>
+  <text x="1470" y="968" class="node-title">OCSP / Trust Outpost</text>
+  <text x="1470" y="996" class="node-body">Revocation and collateral path</text>
+
+  <path class="line" d="M410 275 L470 275"/>
+  <text x="420" y="262" class="arrow-label">Attest request</text>
+
+  <path class="line" d="M620 400 L620 460"/>
+  <text x="638" y="438" class="arrow-label">Token + nonce</text>
+
+  <path class="line" d="M360 565 L390 565"/>
+  <path class="line" d="M610 565 L640 565"/>
+
+  <path class="line" d="M860 565 L960 565"/>
+  <text x="870" y="548" class="arrow-label">Host broker calls</text>
+
+  <path class="line" d="M1310 330 L1450 285"/>
+  <text x="1320" y="300" class="arrow-label">MAA attest</text>
+
+  <path class="line" d="M1310 535 L1450 465"/>
+  <text x="1320" y="482" class="arrow-label">AKV release</text>
+
+  <path class="line" d="M830 565 L1450 655"/>
+  <text x="1080" y="645" class="arrow-label">Remote mode</text>
+
+  <path class="line-dash" d="M830 565 L1450 825"/>
+  <text x="1040" y="760" class="arrow-label">Local mode RIM path</text>
+
+  <path class="line-dash" d="M830 585 L1450 995"/>
+  <text x="1040" y="925" class="arrow-label">OCSP / Outpost path</text>
+
+  <path class="line" d="M410 830 L470 830"/>
+  <text x="414" y="816" class="arrow-label">Decrypted weights</text>
+
+  <path class="line" d="M620 910 L620 940"/>
+  <text x="636" y="930" class="arrow-label">Uses trusted device state</text>
+
+  <rect x="70" y="1125" width="1780" height="45" rx="10" fill="#e9f2ff" stroke="#a8c3df"/>
+  <text x="95" y="1153" class="legend">Decision gate: Key release occurs only when CVM attestation passes AND CGPU binding passes. Failure blocks decryption and model execution.</text>
+</svg>

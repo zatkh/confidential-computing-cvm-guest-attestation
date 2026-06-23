@@ -1,0 +1,10 @@
+{
+  "authorities": [
+    "https://ra26014b305c1c7c2c4521.eus2e.attest.azure.net"
+  ],
+  "require_equals": {
+    "x-ms-isolation-tee.x-ms-attestation-type": "sevsnpvm",
+    "x-ms-isolation-tee.x-ms-sevsnpvm-is-debuggable": false,
+    "x-ms-policy.edge-compliant-cvm": true
+  }
+}

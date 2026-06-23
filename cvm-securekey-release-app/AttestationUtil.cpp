@@ -20,6 +20,7 @@
 #include <sstream>
 #include <iomanip>
 #include <iostream>
+#include <fstream>
 #include <boost/archive/iterators/base64_from_binary.hpp>
 #include <boost/archive/iterators/binary_from_base64.hpp>
 #include <boost/archive/iterators/transform_width.hpp>
@@ -445,14 +446,45 @@ std::string Util::GetMAAToken(const std::string &attestation_url, const std::str
 
     bool is_cvm = false;
     std::string jwt_str;
+
+#ifdef AZURE_LOCAL
+    // Configure the library's CVM<->CGPU binding gate. When enabled, Attest()
+    // attests the local NVIDIA GPU and verifies it is bound to THIS CVM after a
+    // successful CVM attestation and before returning the token (i.e. before
+    // any downstream AKV call). When disabled, Attest() is the CVM-only flow.
+    if (Util::g_gpu_binding_enabled)
+    {
+        attestation_client->ConfigureGpuBinding(true, Util::g_gpu_mode, Util::g_gpu_cfg);
+    }
+#endif
+
     if ((result = attestation_client->Attest(params, &jwt)).code_ != attest::AttestationResult::ErrorCode::SUCCESS)
     {
         std::string errDesc = result.description_.empty() ? "(no description)" : result.description_;
         fprintf(stderr, "MAA attestation failed: error code %d, description: %s\n",
                 static_cast<int>(result.code_), errDesc.c_str());
+#ifdef AZURE_LOCAL
+        // Surface GPU attestation/binding detail (no-op unless -V) so binding
+        // failures are diagnosable before we throw.
+        if (Util::g_gpu_binding_enabled &&
+            attestation_client->GetLastGpuResult(&Util::g_last_gpu_result))
+        {
+            Util::PrintGpuBindingDetails(Util::g_last_gpu_result, Util::g_gpu_mode, nonce_token);
+        }
+#endif
         Uninitialize();
         throw skr_error(EXIT_ATTEST_FAIL, "MAA attestation failed: " + errDesc);
     }
+
+#ifdef AZURE_LOCAL
+    // Binding passed inside Attest(); capture the GPU result for detail
+    // printing (-V) and the -X bound-token export side-file.
+    if (Util::g_gpu_binding_enabled &&
+        attestation_client->GetLastGpuResult(&Util::g_last_gpu_result))
+    {
+        Util::PrintGpuBindingDetails(Util::g_last_gpu_result, Util::g_gpu_mode, nonce_token);
+    }
+#endif
 
     // Attestation succeeded
     jwt_str = std::string(reinterpret_cast<char *>(jwt));
@@ -965,6 +997,14 @@ bool Util::doSKR(const std::string &attestation_url,
                             "MAA attestation returned an empty token. Cannot proceed with key release.");
         }
 
+        // Print interesting CVM / SEV-SNP / MAA token details (no-op unless -V).
+        Util::PrintMaaTokenDetails(attest_token);
+
+        // Note: when AZURE_LOCAL is built with GPU binding enabled, the CVM<->
+        // CGPU binding gate already ran inside GetMAAToken()->Attest() above.
+        // If we reach here the GPU is healthy and bound to this CVM, so the
+        // (unchanged) MAA token can proceed to AKV below.
+
 #ifndef AZURE_LOCAL
         // Get Akv access token either using IMDS or Service Principal
         std::string access_token;
@@ -1024,6 +1064,30 @@ bool Util::doSKR(const std::string &attestation_url,
 
         std::string responseStr(reinterpret_cast<char*>(wrapped_key.get()), wrapped_key_size);
         TRACE_OUT("Azure Local SKR response: %s", Util::reduct_log(responseStr).c_str());
+
+        // release_akv_key() can return HW_EVIDENCE_OK yet still hand back a
+        // non-key diagnostic payload (e.g. the host returns the node's AIK
+        // identity reference like "EUS-ASZTVMAIK-ID-...") when the host-side
+        // AKV release did not actually produce wrapped key material — typically
+        // because the key's release policy / RBAC does not authorize this
+        // node's attestation identity, or the policy claim paths don't match
+        // the presented token. The released SKR envelope is JSON ({"value":...});
+        // anything that isn't a JSON object means no key was released. Detect
+        // that here and fail with an actionable message instead of letting the
+        // downstream json::parse() throw a cryptic "parse error ... 'E'".
+        {
+            const auto first = responseStr.find_first_not_of(" \t\r\n");
+            if (first == std::string::npos || responseStr[first] != '{')
+            {
+                throw skr_error(EXIT_SKR_FAIL,
+                    "Azure Local SKR did not return a released key. The host returned a "
+                    "non-key payload (\"" + responseStr + "\"), which usually means the Key "
+                    "Vault release policy / RBAC does not authorize this node's attestation "
+                    "identity, or the release policy claim paths do not match the attestation "
+                    "token. Verify the key's release policy and the Key Vault Crypto Service "
+                    "Release role assignment for this cluster/node identity.");
+            }
+        }
 #endif
 
         // Parse the response:
@@ -1624,4 +1688,294 @@ bool Util::ReleaseKey(const std::string &attestation_url,
     }
     EVP_PKEY_free(pkey);
     return releaseOk;
+}
+
+namespace
+{
+    // Decode a JWT segment (base64url, no padding) into a UTF-8 string.
+    std::string decode_jwt_segment(const std::string &seg)
+    {
+        std::vector<BYTE> bytes = Util::base64url_to_binary(seg);
+        return std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+    }
+
+    // Print "label: value" for a claim at a dotted JSON path, if present.
+    void print_claim(const json &root, const std::string &label, const std::string &dotted_path)
+    {
+        const json *node = &root;
+        std::stringstream ss(dotted_path);
+        std::string part;
+        while (std::getline(ss, part, '.'))
+        {
+            if (!node->is_object() || !node->contains(part))
+                return; // claim absent; print nothing
+            node = &(*node)[part];
+        }
+        std::string val = node->is_string() ? node->get<std::string>() : node->dump();
+        std::cerr << "    " << std::left << std::setw(34) << label << ": " << val << "\n";
+    }
+
+    // Format a unix-epoch claim (number) as ISO-ish UTC, if present.
+    void print_time_claim(const json &root, const std::string &label, const std::string &key)
+    {
+        if (!root.is_object() || !root.contains(key) || !root[key].is_number())
+            return;
+        std::time_t t = static_cast<std::time_t>(root[key].get<long long>());
+        char buf[40] = {0};
+        std::tm tm_utc{};
+#ifdef _WIN32
+        gmtime_s(&tm_utc, &t);
+#else
+        gmtime_r(&t, &tm_utc);
+#endif
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S UTC", &tm_utc);
+        std::cerr << "    " << std::left << std::setw(34) << label << ": " << buf
+                  << " (" << t << ")\n";
+    }
+} // namespace
+
+/// \copydoc Util::PrintMaaTokenDetails()
+void Util::PrintMaaTokenDetails(const std::string &maa_token)
+{
+    if (!g_print_details)
+        return;
+
+    try
+    {
+        std::vector<std::string> parts;
+        boost::split(parts, maa_token, [](char c) { return c == '.'; });
+        if (parts.size() < 2)
+        {
+            std::cerr << "[details] MAA token is not a well-formed JWT.\n";
+            return;
+        }
+
+        json header = json::parse(decode_jwt_segment(parts[0]));
+        json p = json::parse(decode_jwt_segment(parts[1]));
+
+        std::cerr << "\n";
+        std::cerr << "==================== CVM / MAA ATTESTATION DETAILS ====================\n";
+        std::cerr << "  [MAA token (JWT)]\n";
+        std::cerr << "    " << std::left << std::setw(34) << "size (bytes)" << ": "
+                  << maa_token.size() << "\n";
+        print_claim(header, "header.alg", "alg");
+        print_claim(header, "header.kid (signing key id)", "kid");
+        print_claim(header, "header.typ", "typ");
+        print_claim(p, "issuer (MAA authority)", "iss");
+        print_claim(p, "jti (token id)", "jti");
+        print_time_claim(p, "issued-at (iat)", "iat");
+        print_time_claim(p, "not-before (nbf)", "nbf");
+        print_time_claim(p, "expires (exp)", "exp");
+
+        std::cerr << "  [CVM platform / SEV-SNP isolation]\n";
+        print_claim(p, "attestation type", "x-ms-isolation-tee.x-ms-attestation-type");
+        print_claim(p, "compliance status", "x-ms-isolation-tee.x-ms-compliance-status");
+        print_claim(p, "is-debuggable", "x-ms-isolation-tee.x-ms-sevsnpvm-is-debuggable");
+        print_claim(p, "SNP launch measurement", "x-ms-isolation-tee.x-ms-sevsnpvm-launchmeasurement");
+        print_claim(p, "SNP report id", "x-ms-isolation-tee.x-ms-sevsnpvm-reportid");
+        print_claim(p, "SNP host data", "x-ms-isolation-tee.x-ms-sevsnpvm-hostdata");
+        print_claim(p, "SNP id-key digest", "x-ms-isolation-tee.x-ms-sevsnpvm-idkeydigest");
+        print_claim(p, "SNP guest svn", "x-ms-isolation-tee.x-ms-sevsnpvm-guestsvn");
+        print_claim(p, "SNP bootloader svn", "x-ms-isolation-tee.x-ms-sevsnpvm-bootloader-svn");
+        print_claim(p, "SNP microcode svn", "x-ms-isolation-tee.x-ms-sevsnpvm-microcode-svn");
+        print_claim(p, "SNP TEE svn", "x-ms-isolation-tee.x-ms-sevsnpvm-tee-svn");
+        print_claim(p, "SNP VMPL", "x-ms-isolation-tee.x-ms-sevsnpvm-vmpl");
+        print_claim(p, "SNP author key digest", "x-ms-isolation-tee.x-ms-sevsnpvm-authorkeydigest");
+
+        std::cerr << "  [vTPM / runtime / policy]\n";
+        print_claim(p, "vm-id", "x-ms-isolation-tee.x-ms-sevsnpvm-vmid");
+        print_claim(p, "edge-compliant-cvm policy", "x-ms-policy.edge-compliant-cvm");
+        print_claim(p, "ver", "x-ms-ver");
+        std::cerr << "======================================================================\n";
+
+        if (g_dump_tokens)
+        {
+            std::cerr << "  [MAA token — FULL RAW JWT]\n"
+                      << maa_token << "\n";
+            std::cerr << "  [MAA token — decoded payload (pretty JSON)]\n"
+                      << p.dump(2) << "\n";
+            std::cerr << "======================================================================\n";
+        }
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "[details] Could not decode MAA token claims: " << e.what() << "\n";
+    }
+}
+
+#ifdef AZURE_LOCAL
+/// \copydoc Util::PrintGpuBindingDetails()
+void Util::PrintGpuBindingDetails(const cgpu::GpuResult &gpu,
+                                  cgpu::GpuMode mode,
+                                  const std::string &skr_nonce)
+{
+    if (!g_print_details)
+        return;
+
+    const char *mode_str =
+        mode == cgpu::GpuMode::Remote ? "remote (NVIDIA NRAS cloud verifier)" :
+        mode == cgpu::GpuMode::Local  ? "local (in-guest verifier + RIM dir)" :
+                                        "outpost (in-guest verifier + on-prem RIM/OCSP)";
+
+    std::cerr << "\n";
+    std::cerr << "================= CGPU ATTESTATION & BINDING DETAILS =================\n";
+    const bool bind_on = Util::g_gpu_cfg.bind;
+    std::cerr << "  binding mode                        : "
+              << (bind_on ? "BIND (GPU tied to this CVM launch)"
+                          : "ATTEST-ONLY (GPU and CVM attested independently)") << "\n";
+    std::cerr << "  [GPU binding nonce] (Plan C; ties this GPU to THIS CVM launch)\n";
+    if (bind_on)
+    {
+        std::cerr << "    formula                           : SHA256(v2: \"cgpu-binding-v2\" || SNP launch-measurement|report-id|host-data || skr_nonce;\n";
+        std::cerr << "                                                v1 fallback: \"cgpu-binding-v1\" || MAA_token || skr_nonce)\n";
+    }
+    else
+    {
+        std::cerr << "    formula                           : SHA256(\"cgpu-nobind-v1\" || skr_nonce)  [freshness only; no CVM identity]\n";
+    }
+    std::cerr << "    skr_nonce                         : "
+              << (skr_nonce.empty() ? "(default)" : skr_nonce) << "\n";
+    std::cerr << "    derived gpu_nonce (32-byte hex)   : "
+              << (gpu.nonce_hex.empty() ? "(unavailable)" : gpu.nonce_hex) << "\n";
+
+    std::cerr << "  [GPU attestation result]\n";
+    std::cerr << "    verifier mode                     : " << mode_str << "\n";
+    std::cerr << "    evidence records collected        : " << gpu.num_evidences << "\n";
+    std::cerr << "    overall result (GPU healthy)      : "
+              << (gpu.overall_result ? "true" : "false") << "\n";
+    std::cerr << (bind_on ? "    nonce-match (bound to this CVM)   : "
+                          : "    nonce-match (evidence freshness)  : ")
+              << (gpu.nonce_match ? "true" : "false") << "\n";
+    if (gpu.num_gpus > 1 || gpu.num_evidences > 1)
+    {
+        std::cerr << "    GPUs appraised / bound            : "
+                  << gpu.num_gpus_bound << " of " << gpu.num_gpus << "\n";
+        std::cerr << "    all GPUs bound to this CVM        : "
+                  << (gpu.all_nonce_match ? "true" : "false") << "\n";
+        for (size_t i = 0; i < gpu.ueids.size(); ++i)
+            std::cerr << "      GPU[" << i << "] UEID                    : "
+                      << (gpu.ueids[i].empty() ? "(none)" : gpu.ueids[i]) << "\n";
+    }
+    std::cerr << "    GPU UEID (unique device identity) : "
+              << (gpu.ueid.empty() ? "(none)" : gpu.ueid) << "\n";
+    std::cerr << "    detached EAT (audit JWT) size     : " << gpu.detached_eat.size() << " bytes\n";
+    if (!gpu.error.empty())
+        std::cerr << "    error                             : " << gpu.error << "\n";
+
+    // A few interesting GPU verifier claims, if available.
+    if (!gpu.claims_json.empty())
+    {
+        try
+        {
+            json js = json::parse(gpu.claims_json);
+            const json &g = js.is_array() && !js.empty() ? js.at(0) : js;
+            std::cerr << "  [GPU verifier claims (selected)]\n";
+            print_claim(g, "secure boot", "x-nvidia-gpu-attestation-report-secure-boot");
+            print_claim(g, "cc mode (confidential compute)", "x-nvidia-gpu-attestation-report-cc-mode");
+            print_claim(g, "driver version", "x-nvidia-gpu-driver-version");
+            print_claim(g, "vbios version", "x-nvidia-gpu-vbios-version");
+            print_claim(g, "measurements match (RIM)", "measres");
+            print_claim(g, "attestation report nonce-match", "x-nvidia-gpu-attestation-report-nonce-match");
+        }
+        catch (...)
+        {
+            // best-effort detail only
+        }
+    }
+
+    // NVLink/NVSwitch fabric detail (only when a switch attestation pass ran).
+    if (gpu.switch_attested)
+    {
+        std::cerr << "  [NVLink/NVSwitch fabric attestation result]\n";
+        std::cerr << "    overall result (fabric healthy)   : "
+                  << (gpu.switch_overall_result ? "true" : "false") << "\n";
+        std::cerr << "    NVSwitches appraised / bound      : "
+                  << gpu.num_switches_bound << " of " << gpu.num_switches << "\n";
+        std::cerr << "    all NVSwitches bound to this CVM  : "
+                  << (gpu.all_switch_nonce_match ? "true" : "false") << "\n";
+        for (size_t i = 0; i < gpu.switch_ueids.size(); ++i)
+            std::cerr << "      NVSwitch[" << i << "] UEID               : "
+                      << (gpu.switch_ueids[i].empty() ? "(none)" : gpu.switch_ueids[i]) << "\n";
+        std::cerr << "    detached EAT (audit JWT) size     : "
+                  << gpu.switch_detached_eat.size() << " bytes\n";
+        if (!gpu.switch_error.empty())
+            std::cerr << "    error                             : " << gpu.switch_error << "\n";
+    }
+    std::cerr << "======================================================================\n";
+
+    if (g_dump_tokens)
+    {
+        std::cerr << "  [NVIDIA GPU attestation token — FULL detached EAT (JWT)]\n"
+                  << (gpu.detached_eat.empty() ? "(none)" : gpu.detached_eat) << "\n";
+        if (!gpu.claims_json.empty())
+        {
+            std::cerr << "  [NVIDIA GPU verifier claims — FULL JSON]\n";
+            try
+            {
+                std::cerr << json::parse(gpu.claims_json).dump(2) << "\n";
+            }
+            catch (...)
+            {
+                std::cerr << gpu.claims_json << "\n";
+            }
+        }
+        std::cerr << "======================================================================\n";
+    }
+}
+#endif // AZURE_LOCAL
+
+bool Util::ExportBoundToken(const std::string &attestation_url,
+                            const std::string &nonce,
+                            const std::string &out_path)
+{
+    TRACE_OUT("Entering Util::ExportBoundToken()");
+
+    // 1) Acquire the CVM attestation (MAA) token.
+    std::string attest_token(Util::GetMAAToken(attestation_url, nonce));
+    if (attest_token.empty())
+    {
+        throw skr_error(EXIT_ATTEST_FAIL,
+                        "MAA attestation returned an empty token. Not exporting token.");
+    }
+
+    // Print interesting CVM / SEV-SNP / MAA token details (no-op unless -V).
+    Util::PrintMaaTokenDetails(attest_token);
+
+#ifdef AZURE_LOCAL
+    // The CVM<->CGPU binding gate already ran inside GetMAAToken()->Attest();
+    // if we got here the GPU is healthy and bound to this CVM (otherwise
+    // GetMAAToken would have thrown). Persist the NVIDIA GPU detached EAT next
+    // to the MAA token so the actual GPU attestation token is available for
+    // inspection / the demo.
+    if (Util::g_gpu_binding_enabled && !Util::g_last_gpu_result.detached_eat.empty())
+    {
+        std::cerr << "CVM/CGPU binding OK (gpu ueid=" << Util::g_last_gpu_result.ueid << ")" << std::endl;
+        std::string eat_path = out_path + ".gpu-eat.jwt";
+        std::ofstream eat_ofs(eat_path, std::ios::out | std::ios::trunc | std::ios::binary);
+        if (eat_ofs.is_open())
+        {
+            eat_ofs << Util::g_last_gpu_result.detached_eat;
+            eat_ofs.close();
+            std::cerr << "Exported NVIDIA GPU detached EAT to " << eat_path
+                      << " (" << Util::g_last_gpu_result.detached_eat.size() << " bytes)" << std::endl;
+        }
+    }
+#endif
+
+    // 3) Binding + attestation passed: write the verified token to out_path.
+    std::ofstream ofs(out_path, std::ios::out | std::ios::trunc | std::ios::binary);
+    if (!ofs.is_open())
+    {
+        throw skr_error(EXIT_SKR_FAIL, "Failed to open token output file: " + out_path);
+    }
+    ofs << attest_token;
+    ofs.close();
+    if (!ofs)
+    {
+        throw skr_error(EXIT_SKR_FAIL, "Failed to write token to file: " + out_path);
+    }
+
+    std::cerr << "Exported verified MAA token to " << out_path
+              << " (" << attest_token.size() << " bytes)" << std::endl;
+    return true;
 }

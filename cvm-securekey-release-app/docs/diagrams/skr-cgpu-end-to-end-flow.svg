@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1220" viewBox="0 0 1920 1220" role="img" aria-label="End to end flow of CVM and CGPU bounded SKR for AI model protection">
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fcfdff"/>
+      <stop offset="100%" stop-color="#f3f7ff"/>
+    </linearGradient>
+    <marker id="arr2" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,5.5 L0,11 z" fill="#2f4b6f"/>
+    </marker>
+    <style>
+      .title { font: 700 38px 'Segoe UI', Arial, sans-serif; fill: #132a4a; }
+      .subtitle { font: 500 20px 'Segoe UI', Arial, sans-serif; fill: #355070; }
+      .lane-title { font: 700 17px 'Segoe UI', Arial, sans-serif; fill: #183153; }
+      .step { font: 600 16px 'Segoe UI', Arial, sans-serif; fill: #123055; }
+      .small { font: 500 14px 'Segoe UI', Arial, sans-serif; fill: #1f3f64; }
+      .badge { font: 700 14px 'Segoe UI', Arial, sans-serif; fill: #0f2745; }
+      .lane { stroke: #bfd3ea; stroke-width: 2; }
+      .hdr { fill: #ecf4ff; stroke: #9db9d8; stroke-width: 1.5; }
+      .box { fill: #ffffff; stroke: #6f9bc6; stroke-width: 2; rx: 14; }
+      .box-ok { fill: #eefaf1; stroke: #79b286; stroke-width: 2; rx: 14; }
+      .box-stop { fill: #fff0f0; stroke: #d07a7a; stroke-width: 2; rx: 14; }
+      .line { stroke: #2f4b6f; stroke-width: 2.7; fill: none; marker-end: url(#arr2); }
+      .line-dash { stroke: #2f4b6f; stroke-width: 2.7; fill: none; stroke-dasharray: 8 7; marker-end: url(#arr2); }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1920" height="1220" fill="url(#bg2)"/>
+
+  <text x="70" y="65" class="title">CVM + CGPU Bounded SKR: End-to-End Product Flow</text>
+  <text x="70" y="98" class="subtitle">Assumes real Azure Key Vault release path with host-brokered identity on Azure Local</text>
+
+  <rect class="lane" x="50" y="140" width="300" height="1020" rx="16" fill="#fff"/>
+  <rect class="lane" x="360" y="140" width="300" height="1020" rx="16" fill="#fff"/>
+  <rect class="lane" x="670" y="140" width="300" height="1020" rx="16" fill="#fff"/>
+  <rect class="lane" x="980" y="140" width="300" height="1020" rx="16" fill="#fff"/>
+  <rect class="lane" x="1290" y="140" width="270" height="1020" rx="16" fill="#fff"/>
+  <rect class="lane" x="1570" y="140" width="300" height="1020" rx="16" fill="#fff"/>
+
+  <rect class="hdr" x="60" y="150" width="280" height="54" rx="10"/>
+  <text x="78" y="184" class="lane-title">Client / Caller</text>
+
+  <rect class="hdr" x="370" y="150" width="280" height="54" rx="10"/>
+  <text x="388" y="184" class="lane-title">SKR Service</text>
+
+  <rect class="hdr" x="680" y="150" width="280" height="54" rx="10"/>
+  <text x="698" y="184" class="lane-title">Azure Guest SDK</text>
+
+  <rect class="hdr" x="990" y="150" width="280" height="54" rx="10"/>
+  <text x="1008" y="184" class="lane-title">CGPU + NVIDIA SDK</text>
+
+  <rect class="hdr" x="1300" y="150" width="250" height="54" rx="10"/>
+  <text x="1318" y="184" class="lane-title">IGVM Agent</text>
+
+  <rect class="hdr" x="1580" y="150" width="280" height="54" rx="10"/>
+  <text x="1598" y="184" class="lane-title">Trust Services</text>
+
+  <rect class="box" x="80" y="240" width="240" height="76"/>
+  <text x="98" y="270" class="step">1. Request model access</text>
+  <text x="98" y="295" class="small">Includes session nonce</text>
+
+  <path class="line" d="M320 278 L370 278"/>
+
+  <rect class="box" x="390" y="350" width="240" height="96"/>
+  <text x="408" y="381" class="step">2. Start attestation</text>
+  <text x="408" y="407" class="small">Create attestation context</text>
+  <text x="408" y="431" class="small">Enable CVM to CGPU gate</text>
+
+  <path class="line" d="M630 398 L680 398"/>
+
+  <rect class="box" x="700" y="495" width="240" height="102"/>
+  <text x="718" y="527" class="step">3. CVM evidence flow</text>
+  <text x="718" y="553" class="small">SEV-SNP + vTPM evidence</text>
+  <text x="718" y="578" class="small">MAA token acquisition</text>
+
+  <path class="line" d="M940 545 L1300 545"/>
+  <path class="line" d="M1550 545 L1580 545"/>
+  <text x="1595" y="533" class="small">MAA attestation</text>
+
+  <rect class="box" x="1010" y="670" width="240" height="178"/>
+  <text x="1028" y="701" class="step">4. CGPU binding check</text>
+  <text x="1028" y="727" class="small">Derive gpu_nonce:</text>
+  <text x="1028" y="750" class="small">SHA256(context || MAA token || nonce)</text>
+  <text x="1028" y="776" class="small">Collect GPU evidence</text>
+  <text x="1028" y="800" class="small">Verify and evaluate claims</text>
+  <text x="1028" y="824" class="small">Require overall_result and nonce_match</text>
+
+  <path class="line-dash" d="M1250 760 L1580 700"/>
+  <text x="1600" y="690" class="small">NRAS remote mode</text>
+  <path class="line-dash" d="M1250 790 L1580 800"/>
+  <text x="1600" y="790" class="small">RIM local/outpost path</text>
+  <path class="line-dash" d="M1250 820 L1580 900"/>
+  <text x="1600" y="900" class="small">OCSP / Outpost path</text>
+
+  <rect class="box-stop" x="390" y="900" width="240" height="120"/>
+  <text x="408" y="932" class="step">5a. Gate failed</text>
+  <text x="408" y="958" class="small">No key release attempt</text>
+  <text x="408" y="982" class="small">Return access denied</text>
+
+  <rect class="box-ok" x="700" y="900" width="240" height="120"/>
+  <text x="718" y="932" class="step">5b. Gate passed</text>
+  <text x="718" y="958" class="small">Proceed to key release</text>
+  <text x="718" y="982" class="small">with attested identity</text>
+
+  <path class="line" d="M940 960 L1300 960"/>
+
+  <rect class="box" x="1320" y="930" width="210" height="120"/>
+  <text x="1338" y="962" class="step">6. Host-brokered</text>
+  <text x="1338" y="988" class="small">AKV release request</text>
+  <text x="1338" y="1012" class="small">using cluster identity</text>
+
+  <path class="line" d="M1530 990 L1580 990"/>
+
+  <rect class="box-ok" x="390" y="1060" width="240" height="80"/>
+  <text x="408" y="1092" class="step">7. Decrypt model assets</text>
+  <text x="408" y="1116" class="small">Keys released and unwrapped</text>
+
+  <path class="line" d="M630 1098 L390 1098"/>
+  <path class="line" d="M390 1098 L320 1098"/>
+  <text x="88" y="1090" class="small">8. Return success</text>
+  <text x="88" y="1112" class="small">Model loads on CGPU</text>
+
+  <rect x="70" y="70" width="260" height="42" rx="10" fill="#e7f1ff" stroke="#9fbcda"/>
+  <text x="88" y="96" class="badge">Product policy: fail closed</text>
+
+  <rect x="1575" y="250" width="290" height="260" rx="14" fill="#f7fbff" stroke="#a9c6e4"/>
+  <text x="1595" y="282" class="step">Trust Services Detail</text>
+  <text x="1595" y="312" class="small">- Microsoft Attestation (MAA)</text>
+  <text x="1595" y="336" class="small">- Azure Key Vault / mHSM</text>
+  <text x="1595" y="360" class="small">- NVIDIA NRAS</text>
+  <text x="1595" y="384" class="small">- RIM service or local RIM store</text>
+  <text x="1595" y="408" class="small">- OCSP responder / Trust Outpost</text>
+  <text x="1595" y="442" class="small">Service path depends on</text>
+  <text x="1595" y="466" class="small">attestation mode selection.</text>
+</svg>

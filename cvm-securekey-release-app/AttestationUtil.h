@@ -31,6 +31,10 @@ typedef unsigned long DWORD;
 
 #include <stdexcept>
 
+#ifdef AZURE_LOCAL
+#include <CvmCgpuBinder.h>
+#endif
+
 #ifndef _MSC_VER
 // On Windows, BYTE and PBYTE are already defined by <windows.h>
 typedef unsigned char BYTE;
@@ -172,6 +176,51 @@ public:
         Imds,
         EnvServicePrincipal
     };
+
+#ifdef AZURE_LOCAL
+    // Plan C CGPU binding configuration. Set once from main() before any SKR
+    // call; consumed by GetMAAToken() which configures the library's binding
+    // gate. When g_gpu_binding_enabled is false the SKR flow is byte-for-byte
+    // identical to the CVM-only build.
+    static inline bool             g_gpu_binding_enabled = false;
+    static inline cgpu::GpuMode    g_gpu_mode = cgpu::GpuMode::Remote;
+    static inline cgpu::GpuConfig  g_gpu_cfg{};
+    // Last GPU attestation/binding result, captured from the library after the
+    // binding gate runs inside Attest(). Used for -V detail printing and the
+    // -X bound-token export (GPU detached EAT side-file).
+    static inline cgpu::GpuResult  g_last_gpu_result{};
+#endif
+
+    // When true, the app prints interesting hardware / attestation / binding
+    // details (CVM SEV-SNP claims, MAA token info, GPU attestation results and
+    // the derived GPU binding nonce) to stderr. Enabled by the -V flag or by
+    // setting the SKR_SHOW_DETAILS=1 environment variable.
+    static inline bool g_print_details = false;
+
+    // When true, the app also prints the FULL raw attestation tokens (the MAA
+    // CVM JWT and the NVIDIA GPU detached EAT) to stderr, and ExportBoundToken
+    // writes the GPU EAT to a sibling file next to the exported MAA token.
+    // Enabled by the SKR_DUMP_TOKENS=1 environment variable. Implies details.
+    static inline bool g_dump_tokens = false;
+
+    /// <summary>
+    /// Pretty-print interesting claims from an MAA CVM JWT (SEV-SNP/TDX
+    /// isolation claims, compliance, debuggability, issuer, validity, etc.).
+    /// No-op unless g_print_details is true. Never throws.
+    /// </summary>
+    static void PrintMaaTokenDetails(const std::string &maa_token);
+
+#ifdef AZURE_LOCAL
+    /// <summary>
+    /// Pretty-print GPU attestation results and the CVM<->CGPU binding nonce:
+    /// verifier mode, overall result, nonce-match, GPU UEID, evidence count,
+    /// the derived 32-byte binding nonce and how it was created, and a few
+    /// interesting GPU verifier claims. No-op unless g_print_details is true.
+    /// </summary>
+    static void PrintGpuBindingDetails(const cgpu::GpuResult &gpu,
+                                       cgpu::GpuMode mode,
+                                       const std::string &skr_nonce);
+#endif
 
     /// <summary>
     /// Convert a base64 encoded string to a vector of bytes.
@@ -363,5 +412,22 @@ public:
                            const std::string &nonce,
                            const std::string &key_enc_key,
                            const Util::AkvCredentialSource &akv_credential_source);
+
+    /// <summary>
+    /// Acquire an MAA attestation token and run the CVM<->CGPU binding gate
+    /// (when enabled), then write the verified token to a file. Does NOT call
+    /// Key Vault. Intended for the host-brokered/Azure Local PoC where the real
+    /// AKV release leg is unavailable: the exported token can be handed to an
+    /// AKV simulator that verifies it and releases a key, while this binary
+    /// still enforces the attestation + GPU binding gate (non-zero exit on
+    /// failure means the token is NOT written).
+    /// </summary>
+    /// <param name="attestation_url">Attestation service URL.</param>
+    /// <param name="nonce">unique nonce per attestation request.</param>
+    /// <param name="out_path">File path to write the verified MAA JWT to.</param>
+    /// <returns>True if attestation + binding succeeded and the token was written.</returns>
+    static bool ExportBoundToken(const std::string &attestation_url,
+                                 const std::string &nonce,
+                                 const std::string &out_path);
 
 };

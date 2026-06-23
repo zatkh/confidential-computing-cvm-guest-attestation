@@ -1,0 +1,6 @@
+# Demo runtime artifacts and secrets — never commit.
+out/
+.sim-store/
+model/
+*.enc
+__pycache__/
