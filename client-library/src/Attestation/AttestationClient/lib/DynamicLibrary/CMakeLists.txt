@@ -73,6 +73,7 @@ add_library(${CMAKE_PROJECT_TARGET} SHARED ../../AttestationHelper.cpp
                                            ../ImdsClient.cpp
                                            ../AttestationLibTelemetry.cpp
                                            ../GpuAttestation.cpp
+                                           ../GpuConfigFile.cpp
                                            ../CvmCgpuBinder.cpp
                                            ${CMAKE_SOURCE_DIR}/../external/jsoncpp-0.10.7/src/jsoncpp.cpp)
                                            

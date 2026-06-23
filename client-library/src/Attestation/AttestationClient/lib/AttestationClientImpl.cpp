@@ -242,13 +242,13 @@ void AttestationClientImpl::ConfigureGpuBinding(bool enabled,
     gpu_cfg_ = cfg;
 }
 
-AttestationResult AttestationClientImpl::CGpuAttest(const std::string& maa_token,
+AttestationResult AttestationClientImpl::CGpuAttest(const std::string& nonce_token,
                                                     const std::string& skr_nonce,
                                                     cgpu::GpuResult* out_result) noexcept {
     AttestationResult result(AttestationResult::ErrorCode::SUCCESS);
 
     cgpu::GpuResult gpu;
-    cgpu::BindStatus bs = cgpu::cvm_cgpu_bind(maa_token, gpu_mode_, gpu_cfg_, skr_nonce, &gpu);
+    cgpu::BindStatus bs = cgpu::cvm_cgpu_bind(nonce_token, gpu_mode_, gpu_cfg_, skr_nonce, &gpu);
 
     last_gpu_result_ = gpu;
     has_gpu_result_ = true;

@@ -53,6 +53,7 @@ add_executable(${CMAKE_PROJECT_TARGET} ClientLibTests.cpp
                                        ../../lib/ImdsClient.cpp
                                        ../../lib/AttestationLibTelemetry.cpp
                                        ../../lib/GpuAttestation.cpp
+                                       ../../lib/GpuConfigFile.cpp
                                        ../../lib/CvmCgpuBinder.cpp
                                        ${CMAKE_SOURCE_DIR}/../external/jsoncpp-0.10.7/src/jsoncpp.cpp)
 

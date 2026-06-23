@@ -122,7 +122,7 @@ public:
      * @brief Attest the local NVIDIA GPU and verify it is bound to this CVM
      * (Azure Local only). See AttestationClient::CGpuAttest().
      */
-    attest::AttestationResult CGpuAttest(const std::string& maa_token,
+    attest::AttestationResult CGpuAttest(const std::string& nonce_token,
                                          const std::string& skr_nonce,
                                          cgpu::GpuResult* out_result) noexcept override;
 

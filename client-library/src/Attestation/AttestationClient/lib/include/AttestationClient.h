@@ -122,14 +122,18 @@ public:
 
     /**
      * @brief Attest the local NVIDIA GPU and verify it is bound to this CVM,
-     * given an already-issued MAA token. Azure Local only. Uses the mode/config
-     * set via ConfigureGpuBinding(). This is the GPU counterpart of Attest().
-     * @param[in] maa_token The CVM MAA JWT obtained from Attest().
+     * given an already-issued CVM attestation token. Azure Local only. Uses the
+     * mode/config set via ConfigureGpuBinding(). This is the GPU counterpart of
+     * Attest(). GPU verification goes to NRAS (remote/outpost) or the local
+     * verifier (RIM cache dir or Outpost RIM endpoint + OCSP endpoint); the
+     * token is used only locally to derive the GPU binding nonce.
+     * @param[in] nonce_token The CVM attestation JWT obtained from Attest();
+     * used only to derive the binding nonce, never sent to the GPU verifier.
      * @param[in] skr_nonce Session nonce mixed into the GPU binding nonce.
      * @param[out] out_result Optional detail of the GPU attestation/binding.
      * @return SUCCESS only if the GPU is healthy and bound to this CVM.
      */
-    virtual attest::AttestationResult CGpuAttest(const std::string& maa_token,
+    virtual attest::AttestationResult CGpuAttest(const std::string& nonce_token,
                                                  const std::string& skr_nonce,
                                                  cgpu::GpuResult* out_result) noexcept = 0;
 

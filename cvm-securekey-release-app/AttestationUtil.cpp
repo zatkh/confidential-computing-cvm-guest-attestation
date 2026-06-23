@@ -1819,8 +1819,20 @@ void Util::PrintGpuBindingDetails(const cgpu::GpuResult &gpu,
 
     std::cerr << "\n";
     std::cerr << "================= CGPU ATTESTATION & BINDING DETAILS =================\n";
+    const bool bind_on = Util::g_gpu_cfg.bind;
+    std::cerr << "  binding mode                        : "
+              << (bind_on ? "BIND (GPU tied to this CVM launch)"
+                          : "ATTEST-ONLY (GPU and CVM attested independently)") << "\n";
     std::cerr << "  [GPU binding nonce] (Plan C; ties this GPU to THIS CVM launch)\n";
-    std::cerr << "    formula                           : SHA256(\"cgpu-binding-v1\" || MAA_token || skr_nonce)\n";
+    if (bind_on)
+    {
+        std::cerr << "    formula                           : SHA256(v2: \"cgpu-binding-v2\" || SNP launch-measurement|report-id|host-data || skr_nonce;\n";
+        std::cerr << "                                                v1 fallback: \"cgpu-binding-v1\" || MAA_token || skr_nonce)\n";
+    }
+    else
+    {
+        std::cerr << "    formula                           : SHA256(\"cgpu-nobind-v1\" || skr_nonce)  [freshness only; no CVM identity]\n";
+    }
     std::cerr << "    skr_nonce                         : "
               << (skr_nonce.empty() ? "(default)" : skr_nonce) << "\n";
     std::cerr << "    derived gpu_nonce (32-byte hex)   : "
@@ -1831,8 +1843,19 @@ void Util::PrintGpuBindingDetails(const cgpu::GpuResult &gpu,
     std::cerr << "    evidence records collected        : " << gpu.num_evidences << "\n";
     std::cerr << "    overall result (GPU healthy)      : "
               << (gpu.overall_result ? "true" : "false") << "\n";
-    std::cerr << "    nonce-match (bound to this CVM)   : "
+    std::cerr << (bind_on ? "    nonce-match (bound to this CVM)   : "
+                          : "    nonce-match (evidence freshness)  : ")
               << (gpu.nonce_match ? "true" : "false") << "\n";
+    if (gpu.num_gpus > 1 || gpu.num_evidences > 1)
+    {
+        std::cerr << "    GPUs appraised / bound            : "
+                  << gpu.num_gpus_bound << " of " << gpu.num_gpus << "\n";
+        std::cerr << "    all GPUs bound to this CVM        : "
+                  << (gpu.all_nonce_match ? "true" : "false") << "\n";
+        for (size_t i = 0; i < gpu.ueids.size(); ++i)
+            std::cerr << "      GPU[" << i << "] UEID                    : "
+                      << (gpu.ueids[i].empty() ? "(none)" : gpu.ueids[i]) << "\n";
+    }
     std::cerr << "    GPU UEID (unique device identity) : "
               << (gpu.ueid.empty() ? "(none)" : gpu.ueid) << "\n";
     std::cerr << "    detached EAT (audit JWT) size     : " << gpu.detached_eat.size() << " bytes\n";
@@ -1858,6 +1881,25 @@ void Util::PrintGpuBindingDetails(const cgpu::GpuResult &gpu,
         {
             // best-effort detail only
         }
+    }
+
+    // NVLink/NVSwitch fabric detail (only when a switch attestation pass ran).
+    if (gpu.switch_attested)
+    {
+        std::cerr << "  [NVLink/NVSwitch fabric attestation result]\n";
+        std::cerr << "    overall result (fabric healthy)   : "
+                  << (gpu.switch_overall_result ? "true" : "false") << "\n";
+        std::cerr << "    NVSwitches appraised / bound      : "
+                  << gpu.num_switches_bound << " of " << gpu.num_switches << "\n";
+        std::cerr << "    all NVSwitches bound to this CVM  : "
+                  << (gpu.all_switch_nonce_match ? "true" : "false") << "\n";
+        for (size_t i = 0; i < gpu.switch_ueids.size(); ++i)
+            std::cerr << "      NVSwitch[" << i << "] UEID               : "
+                      << (gpu.switch_ueids[i].empty() ? "(none)" : gpu.switch_ueids[i]) << "\n";
+        std::cerr << "    detached EAT (audit JWT) size     : "
+                  << gpu.switch_detached_eat.size() << " bytes\n";
+        if (!gpu.switch_error.empty())
+            std::cerr << "    error                             : " << gpu.switch_error << "\n";
     }
     std::cerr << "======================================================================\n";
 
